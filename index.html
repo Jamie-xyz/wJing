@@ -1,0 +1,803 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>雾镜</title>
+<style>
+  :root {
+    --ink: #f4f6f8;
+    --ink-soft: rgba(244, 246, 248, 0.76);
+    --ink-faint: rgba(244, 246, 248, 0.5);
+    --card: rgba(22, 26, 31, 0.5);
+    --line: rgba(255, 255, 255, 0.14);
+    /* 开始页背景上的细颗粒（一小张噪点图，铺满） */
+    --grain: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='180' height='180'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 0.1 0'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>");
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0;
+    height: 100%;
+    overflow: hidden;
+    background: #0e1013;
+    color: var(--ink);
+    font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans SC", sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* 镜子：铺满整个窗口的画布 */
+  #view { position: fixed; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; }
+
+  /* 摄像头的原始画面只给程序读，不给人看。
+     不能用 display:none 完全藏起来，否则有的浏览器会停止更新画面。 */
+  #cam { position: fixed; left: 0; top: 0; width: 2px; height: 2px; opacity: 0.01; pointer-events: none; }
+
+  /* ---------- 开始页、出错页 ---------- */
+  .screen {
+    position: fixed;
+    inset: 0;
+    display: flex;
+    padding: 24px 16px;
+    overflow-y: auto;
+    background:
+      var(--grain),
+      radial-gradient(70vmax 55vmax at 28% 22%, rgba(255, 255, 255, 0.14), transparent 70%),
+      radial-gradient(60vmax 50vmax at 78% 82%, rgba(160, 182, 204, 0.16), transparent 70%),
+      linear-gradient(160deg, #2c3239, #121519);
+    transition: opacity 0.6s ease, visibility 0s linear 0s;
+  }
+  .screen.hidden {
+    opacity: 0;
+    visibility: hidden;
+    pointer-events: none;
+    transition: opacity 0.6s ease, visibility 0s linear 0.6s;
+  }
+  .card {
+    margin: auto;
+    width: 100%;
+    max-width: 440px;
+    padding: 44px 28px 36px;
+    text-align: center;
+    border-radius: 26px;
+    background: var(--card);
+    border: 1px solid var(--line);
+    box-shadow: 0 30px 80px rgba(0, 0, 0, 0.35);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+  }
+  h1 {
+    margin: 0 0 14px;
+    font-size: 46px;
+    font-weight: 300;
+    letter-spacing: 0.32em;
+    text-indent: 0.32em; /* 抵消最后一个字后面多出来的字距，让标题看起来居中 */
+  }
+  .lead { margin: 0 0 30px; font-size: 17px; line-height: 1.7; color: var(--ink-soft); }
+  .btn {
+    appearance: none;
+    -webkit-appearance: none;
+    border: 0;
+    border-radius: 999px;
+    padding: 14px 46px;
+    font: inherit;
+    font-size: 18px;
+    font-weight: 600;
+    letter-spacing: 0.18em;
+    background: #fff;
+    color: #15181c;
+    cursor: pointer;
+    transition: transform 0.15s ease, opacity 0.2s ease;
+  }
+  .btn:hover { transform: translateY(-1px); }
+  .btn:disabled { opacity: 0.6; cursor: default; transform: none; letter-spacing: 0.04em; }
+  .btn.ghost { background: transparent; color: var(--ink); border: 1px solid var(--line); }
+  .note { margin: 24px 0 0; font-size: 13px; line-height: 1.7; color: var(--ink-faint); }
+
+  /* 出错页直接出现、直接消失，不和开始页叠在一起淡入淡出 */
+  #problem, #problem.hidden { transition: none; }
+  .problem { max-width: 540px; text-align: left; }
+  .problem h2 { margin: 0 0 12px; font-size: 24px; font-weight: 600; }
+  .problem p { margin: 0 0 10px; line-height: 1.7; color: var(--ink-soft); }
+  .problem .step-title { margin: 18px 0 6px; color: var(--ink); font-weight: 600; }
+  .problem ol { margin: 0; padding-left: 1.4em; line-height: 1.85; color: var(--ink-soft); }
+  .problem ol + p { margin-top: 16px; }
+  .problem b { color: var(--ink); }
+  .problem .small { font-size: 13px; color: var(--ink-faint); }
+  .actions { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 26px; }
+  .actions .btn { padding: 12px 28px; font-size: 16px; letter-spacing: 0.06em; }
+
+  /* ---------- 底部的小提示 ---------- */
+  .hint {
+    position: fixed;
+    left: 50%;
+    bottom: max(20px, env(safe-area-inset-bottom));
+    transform: translateX(-50%);
+    max-width: calc(100% - 32px);
+    padding: 9px 18px;
+    border-radius: 999px;
+    font-size: 14px;
+    text-align: center;
+    color: rgba(255, 255, 255, 0.92);
+    background: rgba(10, 12, 15, 0.42);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    pointer-events: none;
+    transition: opacity 0.8s ease;
+  }
+  .hint.hidden { opacity: 0; }
+  .hint.dim { opacity: 0.5; }
+</style>
+</head>
+<body>
+
+<canvas id="view"></canvas>
+<video id="cam" autoplay muted playsinline></video>
+
+<div id="hint" class="hint hidden">按住鼠标擦雾 · 按空格重新起雾（测试用）</div>
+
+<section id="start" class="screen">
+  <div class="card">
+    <h1>雾镜</h1>
+    <p class="lead">对着镜头哈气起雾，捏住拇指和食指擦雾</p>
+    <button id="startBtn" class="btn">开始</button>
+    <p class="note">画面只在你的电脑里处理，不会上传<br>测试版：现在先用鼠标擦雾、按空格重新起雾</p>
+  </div>
+</section>
+
+<section id="problem" class="screen hidden">
+  <div class="card problem">
+    <h2 id="problemTitle"></h2>
+    <div id="problemBody"></div>
+    <div class="actions">
+      <button id="retryBtn" class="btn">再试一次</button>
+      <button id="reloadBtn" class="btn ghost">刷新页面</button>
+    </div>
+  </div>
+</section>
+
+<script type="module">
+// =====================================================================
+//  雾镜 · 第一阶段：镜子 + 雾 + 鼠标擦雾 + 空格起雾
+//
+//  画面是怎么来的：
+//    摄像头 → <video>（藏起来）→ 每一帧用 WebGL（让显卡画图）画到 <canvas> 上。
+//    显卡手里有两份画面：「清晰镜像」和「磨砂镜像」（模糊、发白、带颗粒），
+//    再照着「雾浓度表」决定每个位置显示哪一份、各占多少。
+//
+//  雾是怎么存的（最重要的一点）：
+//    fog.density 是一张看不见的表格，每一格管屏幕上 4×4 个像素，
+//    存一个 0（没雾）到 1（最浓）的数。
+//    起雾 = 往表里加；擦雾 = 从表里减；消散 = 每帧整体减一点点。
+//    雾只存在这张表里，画面每帧照着它重新合成，所以擦掉的地方不会被盖回去。
+// =====================================================================
+
+// ---------- 可以调的数字（第四阶段会做进设置面板） ----------
+const SETTINGS = {
+  brushSize: 0.035,   // 擦痕半径 = 屏幕短边 × 这个比例
+  fadeSeconds: 240,   // 最浓的雾放着不管，大约多少秒散完
+  refogSeconds: 4,    // 按空格后，雾大约多少秒长到最浓（看起来盖满要 2～4 秒，各处快慢不一）
+};
+
+const CELL = 4;       // 雾浓度表的一格 = 屏幕上 4×4 个像素
+const MAX_DPR = 1.5;  // 画布最多按 1.5 倍清晰度画：摄像头本身没那么清楚，画得更细只会更费电
+
+const $ = (id) => document.getElementById(id);
+const canvas = $('view');
+const video = $('cam');
+const startScreen = $('start');
+const startBtn = $('startBtn');
+const problemScreen = $('problem');
+const hint = $('hint');
+
+let W = 0, H = 0;     // 窗口大小（CSS 像素）
+let running = false;  // 摄像头开好了没有
+
+// =====================================================================
+//  1. 开始按钮 → 打开摄像头
+// =====================================================================
+startBtn.addEventListener('click', start);
+$('retryBtn').addEventListener('click', start);
+$('reloadBtn').addEventListener('click', () => location.reload());
+
+async function start() {
+  hide(problemScreen);
+  show(startScreen);
+  startBtn.disabled = true;
+  startBtn.textContent = '正在打开摄像头…';
+  startBtn.blur();
+
+  if (!initGL()) return showProblem('webgl');
+  // 只有「安全地址」（https:// 或 localhost）才有 mediaDevices
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) return showProblem('insecure');
+
+  try {
+    if (video.srcObject) video.srcObject.getTracks().forEach((t) => t.stop()); // 上次没开成功的先关掉
+    video.srcObject = await navigator.mediaDevices.getUserMedia({
+      audio: false,
+      video: { facingMode: 'user', width: { ideal: 1280 }, height: { ideal: 720 } },
+    });
+    await video.play();
+    await videoHasSize();
+  } catch (err) {
+    console.error(err);
+    return showProblem(err && err.name);
+  }
+
+  // 摄像头中途断开（被拔掉、被别的程序抢走）
+  const track = video.srcObject.getVideoTracks()[0];
+  if (track) track.addEventListener('ended', () => { running = false; showProblem('ended'); });
+
+  hide(startScreen);
+  running = true;
+  watchVideoFrames();
+  requestAnimationFrame(loop);
+  show(hint);
+  setTimeout(() => hint.classList.add('dim'), 8000);
+}
+
+// 等摄像头画面真正有了尺寸（有的浏览器 play() 之后还要再等一下）
+function videoHasSize() {
+  return new Promise((resolve, reject) => {
+    const t0 = performance.now();
+    (function check() {
+      if (video.videoWidth > 0) resolve();
+      else if (performance.now() - t0 > 5000) reject(Object.assign(new Error('摄像头没有画面'), { name: 'NoVideo' }));
+      else requestAnimationFrame(check);
+    })();
+  });
+}
+
+// ---------- 出错时用中文说明怎么办 ----------
+const isSafari = /^((?!chrome|chromium|crios|fxios|edg|android).)*safari/i.test(navigator.userAgent);
+
+const PROBLEMS = {
+  denied: {
+    title: '摄像头权限被拒绝了',
+    body: () => '<p>雾镜要用摄像头当镜子。画面只在你的电脑里处理，不会上传。按下面的步骤打开权限：</p>' + permissionSteps(),
+    retry: false,
+  },
+  notfound: {
+    title: '没有找到摄像头',
+    body: () => '<p>电脑好像没有能用的摄像头。如果用的是外接摄像头，检查一下有没有插好，然后点「再试一次」。</p>',
+    retry: true,
+  },
+  busy: {
+    title: '摄像头被别的程序占用了',
+    body: () => '<p>可能是 FaceTime、Photo Booth、Zoom、腾讯会议之类的程序正在用摄像头。把它们关掉，再点「再试一次」。</p>',
+    retry: true,
+  },
+  ended: {
+    title: '摄像头断开了',
+    body: () => '<p>摄像头好像被拔掉了，或者被别的程序拿走了。点「再试一次」重新打开。</p>',
+    retry: true,
+  },
+  insecure: {
+    title: '这样打开用不了摄像头',
+    body: () => '<p>浏览器只允许「安全地址」使用摄像头：网址要以 <b>https://</b> 开头，或者是 <b>http://localhost</b>。</p>'
+      + '<p>如果你是双击 index.html 打开的，请改成在浏览器里打开本地服务器的地址，比如 <b>http://localhost:8000</b>。</p>',
+    retry: false,
+  },
+  webgl: {
+    title: '浏览器画不了这个画面',
+    body: () => '<p>雾镜要用显卡画图（WebGL），但这个浏览器没有开启。请换最新版的 Chrome 或 Safari 试试。</p>',
+    retry: false,
+  },
+  lost: {
+    title: '画面中断了',
+    body: () => '<p>显卡画图被系统打断了（比如电脑刚从睡眠中醒来）。刷新一下页面就好。</p>',
+    retry: false,
+  },
+  other: {
+    title: '打开摄像头时出了点问题',
+    body: (name) => `<p>可以点「再试一次」，或者刷新页面。</p><p class="small">错误代码：${escapeHtml(name || '未知')}</p>`,
+    retry: true,
+  },
+};
+
+function permissionSteps() {
+  const site = escapeHtml(location.hostname || '这个网站');
+  const browserSteps = isSafari
+    ? `<p class="step-title">在 Safari 里允许：</p>
+       <ol>
+         <li>点屏幕左上角菜单栏的「Safari 浏览器」→「设置…」</li>
+         <li>点上面一排的「网站」，再点左边的「摄像头」</li>
+         <li>在右边找到 <b>${site}</b>，改成「允许」</li>
+       </ol>`
+    : `<p class="step-title">在 Chrome 里允许：</p>
+       <ol>
+         <li>点地址栏最左边、网址前面的小图标</li>
+         <li>找到「摄像头」，把它打开（或改成「允许」）</li>
+       </ol>`;
+  return browserSteps + `
+    <p class="step-title">如果浏览器里已经是「允许」，可能是 Mac 系统挡住了：</p>
+    <ol>
+      <li>点屏幕左上角的苹果图标 →「系统设置」</li>
+      <li>点「隐私与安全性」→「摄像头」</li>
+      <li>在列表里找到你用的浏览器，打开它旁边的开关（系统可能会让你重新打开浏览器）</li>
+    </ol>
+    <p>都改好以后，点下面的「刷新页面」。</p>`;
+}
+
+function showProblem(name) {
+  const kind =
+    ['NotAllowedError', 'PermissionDeniedError', 'SecurityError'].includes(name) ? 'denied' :
+    ['NotFoundError', 'DevicesNotFoundError', 'OverconstrainedError'].includes(name) ? 'notfound' :
+    ['NotReadableError', 'TrackStartError', 'AbortError'].includes(name) ? 'busy' :
+    name in PROBLEMS ? name : 'other';
+  const p = PROBLEMS[kind];
+  $('problemTitle').textContent = p.title;
+  $('problemBody').innerHTML = p.body(name);
+  $('retryBtn').hidden = !p.retry;
+  $('reloadBtn').classList.toggle('ghost', p.retry); // 只剩「刷新页面」一个按钮时，让它显眼一点
+  startBtn.disabled = false;
+  startBtn.textContent = '开始';
+  hide(hint);
+  show(problemScreen); // 盖在开始页上面；点「再试一次」时拿掉它，下面就是开始页
+}
+
+// =====================================================================
+//  2. 雾浓度表：雾只存在这里
+// =====================================================================
+const fog = {
+  w: 0, h: 0,                       // 表格有多少列、多少行
+  density: new Float32Array(0),     // 每格的雾浓度：0 = 没雾，1 = 最浓
+  bytes: new Uint8ClampedArray(0),  // 同一张表的 0~255 版本，交给显卡用
+  lumpy: new Float32Array(0),       // 每格一个 0~1 的随机数（大块起伏）：哪里雾长得快、散得快
+  ragged: new Float32Array(0),      // 每格一个 0~1 的随机数（小块起伏）：让擦痕边缘不那么整齐
+};
+
+function resizeFog() {
+  const w = Math.ceil(W / CELL), h = Math.ceil(H / CELL);
+  if (w === fog.w && h === fog.h) return;
+  const old = fog.density, ow = fog.w, oh = fog.h;
+  const density = new Float32Array(w * h);
+  if (ow === 0) {
+    density.fill(1); // 刚打开：满屏是雾
+  } else {           // 窗口大小变了：尽量保留原来的雾
+    for (let j = 0; j < h; j++)
+      for (let i = 0; i < w; i++)
+        density[j * w + i] = old[Math.min(j, oh - 1) * ow + Math.min(i, ow - 1)];
+  }
+  const lumpy = new Float32Array(w * h), ragged = new Float32Array(w * h);
+  for (let j = 0; j < h; j++) {
+    for (let i = 0; i < w; i++) {
+      const x = (i + 0.5) * CELL, y = (j + 0.5) * CELL; // 这一格在屏幕上的位置
+      lumpy[j * w + i] = 0.65 * smoothNoise(x / 190, y / 190) + 0.35 * smoothNoise(x / 70 + 31, y / 70 + 17);
+      ragged[j * w + i] = 0.6 * smoothNoise(x / 9 + 101, y / 9 + 53) + 0.4 * smoothNoise(x / 24 + 7, y / 24 + 91);
+    }
+  }
+  Object.assign(fog, { w, h, density, lumpy, ragged, bytes: new Uint8ClampedArray(w * h) });
+  for (let k = 0; k < density.length; k++) fog.bytes[k] = density[k] * 255;
+  gl.bindTexture(gl.TEXTURE_2D, maskTex);
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.LUMINANCE, w, h, 0, gl.LUMINANCE, gl.UNSIGNED_BYTE, fog.bytes);
+}
+
+let refogLeft = 0; // 按空格后，还要继续起雾多少秒
+
+// 每一帧：雾慢慢散；如果刚按过空格，就再往上长
+function updateFog(dt) {
+  const fade = dt / SETTINGS.fadeSeconds;
+  const grow = refogLeft > 0 ? dt / SETTINGS.refogSeconds : 0;
+  refogLeft = Math.max(0, refogLeft - dt);
+  const { density, bytes, lumpy } = fog;
+  for (let k = 0; k < density.length; k++) {
+    const speed = 0.6 + 0.8 * lumpy[k]; // 0.6~1.4 倍：各处快慢不一，看起来更自然
+    let v = density[k] + (grow - fade) * speed;
+    v = v < 0 ? 0 : v > 1 ? 1 : v;
+    density[k] = v;
+    bytes[k] = v * 255;
+  }
+}
+
+// =====================================================================
+//  3. 擦雾（现在用鼠标，第二阶段加上手势）
+// =====================================================================
+function brushRadius() { return Math.max(14, Math.min(W, H) * SETTINGS.brushSize); }
+
+// 从 (x0,y0) 擦到 (x1,y1)。擦掉的是一整段「胶囊形」（线段 + 两头圆），
+// 所以移动得再快，痕迹也是连着的，不会断成一个个点。
+function wipe(x0, y0, x1, y1) {
+  const r = brushRadius();
+  const soft = r * 0.4; // 边缘这么宽的一圈慢慢过渡，不是一刀切
+  const { w, h, density, ragged } = fog;
+  const i0 = Math.max(0, Math.floor((Math.min(x0, x1) - r * 1.1) / CELL));
+  const i1 = Math.min(w - 1, Math.floor((Math.max(x0, x1) + r * 1.1) / CELL));
+  const j0 = Math.max(0, Math.floor((Math.min(y0, y1) - r * 1.1) / CELL));
+  const j1 = Math.min(h - 1, Math.floor((Math.max(y0, y1) + r * 1.1) / CELL));
+  const dx = x1 - x0, dy = y1 - y0;
+  const len2 = dx * dx + dy * dy;
+  for (let j = j0; j <= j1; j++) {
+    const py = (j + 0.5) * CELL;
+    for (let i = i0; i <= i1; i++) {
+      const px = (i + 0.5) * CELL;
+      // 这一格离线段最近的距离
+      let t = len2 > 0 ? ((px - x0) * dx + (py - y0) * dy) / len2 : 0;
+      t = t < 0 ? 0 : t > 1 ? 1 : t;
+      const ex = x0 + dx * t - px, ey = y0 + dy * t - py;
+      const dist = Math.sqrt(ex * ex + ey * ey);
+      const k = j * w + i;
+      const edge = r * (0.92 + 0.16 * ragged[k]); // 每个地方的边缘远近略有不同，像手指擦出来的
+      if (dist >= edge) continue;
+      // keep：这一格最多还能剩多少雾（中心是 0 = 擦干净，往外慢慢回到 1）
+      const keep = smoothstep(edge - soft, edge, dist);
+      if (keep < density[k]) density[k] = keep; // 只会变少不会变多；同一个地方擦几遍效果一样
+    }
+  }
+}
+
+let wiping = false, lastX = 0, lastY = 0;
+
+canvas.addEventListener('pointerdown', (e) => {
+  if (!running || (e.pointerType === 'mouse' && e.button !== 0)) return;
+  wiping = true;
+  lastX = e.clientX;
+  lastY = e.clientY;
+  canvas.setPointerCapture(e.pointerId);
+  wipe(lastX, lastY, lastX, lastY); // 点一下也能擦出一个圆
+});
+canvas.addEventListener('pointermove', (e) => {
+  if (!wiping) return;
+  const list = e.getCoalescedEvents ? e.getCoalescedEvents() : [];
+  for (const p of list.length ? list : [e]) { // 两帧之间鼠标可能动了好几下，每一下都擦
+    wipe(lastX, lastY, p.clientX, p.clientY);
+    lastX = p.clientX;
+    lastY = p.clientY;
+  }
+});
+const stopWiping = () => { wiping = false; };
+canvas.addEventListener('pointerup', stopWiping);
+canvas.addEventListener('pointercancel', stopWiping);
+
+// 空格：重新起雾（临时测试用，第三阶段换成哈气）
+window.addEventListener('keydown', (e) => {
+  if (e.code !== 'Space' || !running) return;
+  e.preventDefault();
+  refogLeft = SETTINGS.refogSeconds / 0.6; // 长得最慢的地方（0.6 倍速）也能长满
+});
+
+// =====================================================================
+//  4. WebGL：把「清晰镜像」和「磨砂镜像」按雾的浓度混在一起
+// =====================================================================
+let gl = null;
+let P = null;         // 几个着色器程序（在显卡上跑的小程序）
+let videoTex = null;  // 摄像头画面（显卡里的一份）
+let maskTex = null;   // 雾浓度表（显卡里的一份）
+let T = null;         // 几张缩小的中间画面，用来做模糊
+
+const VERT = `
+attribute vec2 aPos;
+varying vec2 vUv;   // 0~1，左下角是 (0,0)（WebGL 的习惯）
+void main() {
+  vUv = aPos * 0.5 + 0.5;
+  gl_Position = vec4(aPos, 0.0, 1.0);
+}`;
+
+const FRAG_HEAD = `
+#ifdef GL_FRAGMENT_PRECISION_HIGH
+precision highp float;
+#else
+precision mediump float;
+#endif
+varying vec2 vUv;
+`;
+
+// 从摄像头画面里取颜色：先「铺满裁切」，再左右翻转，就成了镜子
+const MIRROR_GLSL = `
+uniform sampler2D uVideo;
+uniform vec2 uVidScale;
+uniform vec2 uVidOffset;
+vec3 mirrorAt(vec2 st) {   // st：屏幕上的位置，0~1，左上角是 (0,0)
+  vec2 d = (st - uVidOffset) * uVidScale;
+  return texture2D(uVideo, vec2(1.0 - d.x, d.y)).rgb;
+}`;
+
+const FRAG = {
+  // ① 摄像头画面 → 缩到 1/4 大小（每个点取 4 个样本平均，免得画面闪）
+  videoDown: MIRROR_GLSL + `
+uniform vec2 uTexel;
+void main() {
+  vec2 st = vec2(vUv.x, 1.0 - vUv.y);
+  vec2 h = uTexel * 0.25;
+  vec3 c = mirrorAt(st + vec2(-h.x, -h.y)) + mirrorAt(st + vec2(h.x, -h.y))
+         + mirrorAt(st + vec2(-h.x,  h.y)) + mirrorAt(st + vec2(h.x,  h.y));
+  gl_FragColor = vec4(c * 0.25, 1.0);
+}`,
+
+  // ② 再缩小一半
+  down: `
+uniform sampler2D uSrc;
+uniform vec2 uSrcTexel;
+void main() {
+  vec2 o = uSrcTexel;
+  vec3 c = texture2D(uSrc, vUv + vec2(-o.x, -o.y)).rgb + texture2D(uSrc, vUv + vec2(o.x, -o.y)).rgb
+         + texture2D(uSrc, vUv + vec2(-o.x,  o.y)).rgb + texture2D(uSrc, vUv + vec2(o.x,  o.y)).rgb;
+  gl_FragColor = vec4(c * 0.25, 1.0);
+}`,
+
+  // ③ 高斯模糊：一次只沿一个方向糊，横着一遍、竖着一遍，合起来就是一整圈
+  blur: `
+uniform sampler2D uSrc;
+uniform vec2 uStep;
+void main() {
+  vec3 c = texture2D(uSrc, vUv).rgb * 0.2270270270;
+  c += (texture2D(uSrc, vUv + uStep * 1.3846153846).rgb + texture2D(uSrc, vUv - uStep * 1.3846153846).rgb) * 0.3162162162;
+  c += (texture2D(uSrc, vUv + uStep * 3.2307692308).rgb + texture2D(uSrc, vUv - uStep * 3.2307692308).rgb) * 0.0702702703;
+  gl_FragColor = vec4(c, 1.0);
+}`,
+
+  // ④ 合成：清晰镜像 + 磨砂镜像，按雾浓度混合，画到屏幕上
+  composite: MIRROR_GLSL + `
+uniform sampler2D uMask;
+uniform sampler2D uBlurA;
+uniform sampler2D uBlurB;
+uniform vec2 uMaskScale;
+uniform vec2 uScreen;
+uniform vec2 uTexelA;
+uniform vec2 uTexelB;
+
+// 给每个位置一个固定的随机数 0~1
+float hash12(vec2 p) {
+  vec3 p3 = fract(vec3(p.xyx) * 0.1031);
+  p3 += dot(p3, p3.yzx + 33.33);
+  return fract((p3.x + p3.y) * p3.z);
+}
+// 平滑起伏的随机图案，用来让雾的薄厚不那么均匀
+float vnoise(vec2 p) {
+  vec2 i = floor(p);
+  vec2 f = fract(p);
+  vec2 u = f * f * (3.0 - 2.0 * f);
+  return mix(mix(hash12(i), hash12(i + vec2(1.0, 0.0)), u.x),
+             mix(hash12(i + vec2(0.0, 1.0)), hash12(i + vec2(1.0, 1.0)), u.x), u.y);
+}
+// 小图放大时取 4 个点平均，放大后更顺滑
+vec3 smoothTex(sampler2D t, vec2 uv, vec2 texel) {
+  vec2 o = texel * 0.5;
+  return 0.25 * (texture2D(t, uv + vec2(-o.x, -o.y)).rgb + texture2D(t, uv + vec2(o.x, -o.y)).rgb
+               + texture2D(t, uv + vec2(-o.x,  o.y)).rgb + texture2D(t, uv + vec2(o.x,  o.y)).rgb);
+}
+
+void main() {
+  vec2 st = vec2(vUv.x, 1.0 - vUv.y);
+  vec3 sharp = mirrorAt(st);                          // 清晰镜像
+  float m = texture2D(uMask, st * uMaskScale).r;      // 这里的雾有多浓：0~1
+  if (m < 0.004) { gl_FragColor = vec4(sharp, 1.0); return; }
+
+  // 雾越浓越模糊：薄雾用轻模糊，浓雾用重模糊
+  vec3 light = smoothTex(uBlurA, vUv, uTexelA);
+  vec3 heavy = smoothTex(uBlurB, vUv, uTexelB);
+  vec3 blurred = mix(light, heavy, smoothstep(0.15, 0.8, m));
+
+  // 发白、对比度变低：往「雾的颜色」上拉。周围越亮，雾也越亮
+  vec2 px = st * uScreen;
+  float uneven = 0.6 * vnoise(px / 160.0) + 0.4 * vnoise(px / 45.0);
+  float ambient = dot(heavy, vec3(0.299, 0.587, 0.114));
+  vec3 fogColor = vec3(0.93, 0.95, 0.98) * (0.5 + 0.42 * ambient);
+  float whiten = (0.26 + 0.34 * m) * (0.8 + 0.4 * uneven);
+  vec3 frosted = mix(blurred, fogColor, whiten);
+  frosted = mix(vec3(dot(frosted, vec3(0.299, 0.587, 0.114))), frosted, 0.8); // 颜色淡一点
+  frosted += (hash12(gl_FragCoord.xy) - 0.5) * 0.05;                         // 细颗粒
+
+  gl_FragColor = vec4(mix(sharp, frosted, smoothstep(0.0, 0.55, m)), 1.0);
+}`,
+};
+
+function initGL() {
+  if (gl) return true;
+  const opts = { alpha: false, antialias: false, depth: false, stencil: false };
+  gl = canvas.getContext('webgl', opts) || canvas.getContext('experimental-webgl', opts);
+  if (!gl) return false;
+  try {
+    P = {
+      videoDown: makeProgram(FRAG.videoDown),
+      down: makeProgram(FRAG.down),
+      blur: makeProgram(FRAG.blur),
+      composite: makeProgram(FRAG.composite),
+    };
+  } catch (err) {
+    console.error(err);
+    gl = null;
+    return false;
+  }
+  const buf = gl.createBuffer(); // 一个盖住整个画面的大三角形
+  gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW);
+  gl.enableVertexAttribArray(0);
+  gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
+  gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+
+  videoTex = makeTexture();
+  maskTex = makeTexture();
+  canvas.addEventListener('webglcontextlost', (e) => {
+    e.preventDefault();
+    running = false;
+    showProblem('lost');
+  });
+  resize();
+  window.addEventListener('resize', resize);
+  return true;
+}
+
+function makeProgram(fragSource) {
+  const compile = (type, src) => {
+    const s = gl.createShader(type);
+    gl.shaderSource(s, src);
+    gl.compileShader(s);
+    if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s));
+    return s;
+  };
+  const program = gl.createProgram();
+  gl.attachShader(program, compile(gl.VERTEX_SHADER, VERT));
+  gl.attachShader(program, compile(gl.FRAGMENT_SHADER, FRAG_HEAD + fragSource));
+  gl.bindAttribLocation(program, 0, 'aPos');
+  gl.linkProgram(program);
+  if (!gl.getProgramParameter(program, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(program));
+  const loc = {}; // 记下每个参数（uniform）在显卡上的位置
+  const count = gl.getProgramParameter(program, gl.ACTIVE_UNIFORMS);
+  for (let i = 0; i < count; i++) {
+    const name = gl.getActiveUniform(program, i).name;
+    loc[name] = gl.getUniformLocation(program, name);
+  }
+  return { program, loc };
+}
+
+function makeTexture() {
+  const t = gl.createTexture();
+  gl.bindTexture(gl.TEXTURE_2D, t);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+  return t;
+}
+
+// 一张可以往上画的中间画面（在显卡里）
+function makeTarget(w, h) {
+  const tex = makeTexture();
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+  const fb = gl.createFramebuffer();
+  gl.bindFramebuffer(gl.FRAMEBUFFER, fb);
+  gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tex, 0);
+  gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+  return { tex, fb, w, h };
+}
+
+// 用某个程序画一遍。target 是要画到哪张中间画面上；null 表示直接画到屏幕上
+function pass(prog, target, textures, values) {
+  gl.bindFramebuffer(gl.FRAMEBUFFER, target ? target.fb : null);
+  gl.viewport(0, 0, target ? target.w : canvas.width, target ? target.h : canvas.height);
+  gl.useProgram(prog.program);
+  let unit = 0;
+  for (const name in textures) {
+    gl.activeTexture(gl.TEXTURE0 + unit);
+    gl.bindTexture(gl.TEXTURE_2D, textures[name]);
+    gl.uniform1i(prog.loc[name], unit);
+    unit++;
+  }
+  for (const name in values) gl.uniform2f(prog.loc[name], values[name][0], values[name][1]); // 这里的参数都是两个数一组
+  gl.drawArrays(gl.TRIANGLES, 0, 3);
+}
+
+// 窗口大小变了：画布、雾浓度表、中间画面都跟着变
+function resize() {
+  W = window.innerWidth;
+  H = window.innerHeight;
+  const dpr = Math.min(window.devicePixelRatio || 1, MAX_DPR);
+  canvas.width = Math.round(W * dpr);
+  canvas.height = Math.round(H * dpr);
+  resizeFog();
+  if (T) for (const k in T) { gl.deleteTexture(T[k].tex); gl.deleteFramebuffer(T[k].fb); }
+  const size = (n) => [Math.max(1, Math.ceil(W / n)), Math.max(1, Math.ceil(H / n))];
+  T = {
+    quarter: makeTarget(...size(4)),                         // 1/4 大小的镜像
+    a: makeTarget(...size(8)), aTmp: makeTarget(...size(8)), // 1/8 大小：轻模糊
+    b: makeTarget(...size(16)), bTmp: makeTarget(...size(16)), // 1/16 大小：重模糊
+  };
+  videoFresh = true;
+}
+
+// 横着糊一遍（t → tmp），再竖着糊一遍（tmp → t）
+function blur(t, tmp, spread) {
+  pass(P.blur, tmp, { uSrc: t.tex }, { uStep: [spread / t.w, 0] });
+  pass(P.blur, t, { uSrc: tmp.tex }, { uStep: [0, spread / t.h] });
+}
+
+// 用最新的摄像头画面，重新做两份模糊的镜像
+function updateBlur(mirror) {
+  const { quarter, a, aTmp, b, bTmp } = T;
+  pass(P.videoDown, quarter, { uVideo: videoTex }, { ...mirror, uTexel: [1 / quarter.w, 1 / quarter.h] });
+  pass(P.down, a, { uSrc: quarter.tex }, { uSrcTexel: [1 / quarter.w, 1 / quarter.h] });
+  blur(a, aTmp, 1.5);                 // 轻模糊
+  pass(P.down, b, { uSrc: a.tex }, { uSrcTexel: [1 / a.w, 1 / a.h] });
+  blur(b, bTmp, 1.6);                 // 重模糊：再缩小、再糊两轮
+  blur(b, bTmp, 1.6);
+}
+
+// 摄像头一秒大约 30 张新画面，屏幕一秒刷新 60 次以上。
+// 只在有新画面时才重新做模糊，省电。
+const canWatchFrames = 'requestVideoFrameCallback' in HTMLVideoElement.prototype;
+let videoFresh = true;
+let lastVideoAt = 0;
+let watching = false;
+
+function watchVideoFrames() {
+  if (!canWatchFrames || watching) return;
+  watching = true;
+  const onFrame = () => { videoFresh = true; video.requestVideoFrameCallback(onFrame); };
+  video.requestVideoFrameCallback(onFrame);
+}
+
+function draw(now) {
+  const vw = video.videoWidth, vh = video.videoHeight;
+  if (!vw || !vh) return;
+
+  // 「铺满裁切」：把摄像头画面等比放大到刚好盖满窗口，多出来的边切掉，所以不会变形
+  const s = Math.max(W / vw, H / vh);
+  const dw = vw * s, dh = vh * s;
+  const mirror = { uVidScale: [W / dw, H / dh], uVidOffset: [(W - dw) / 2 / W, (H - dh) / 2 / H] };
+
+  if (!canWatchFrames || videoFresh || now - lastVideoAt > 100) {
+    videoFresh = false;
+    lastVideoAt = now;
+    gl.bindTexture(gl.TEXTURE_2D, videoTex);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, video);
+    updateBlur(mirror);
+  }
+
+  // 把最新的雾浓度表交给显卡
+  gl.bindTexture(gl.TEXTURE_2D, maskTex);
+  gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, fog.w, fog.h, gl.LUMINANCE, gl.UNSIGNED_BYTE, fog.bytes);
+
+  pass(P.composite, null,
+    { uVideo: videoTex, uMask: maskTex, uBlurA: T.a.tex, uBlurB: T.b.tex },
+    {
+      ...mirror,
+      uMaskScale: [W / (CELL * fog.w), H / (CELL * fog.h)],
+      uScreen: [W, H],
+      uTexelA: [1 / T.a.w, 1 / T.a.h],
+      uTexelB: [1 / T.b.w, 1 / T.b.h],
+    });
+}
+
+// =====================================================================
+//  5. 每一帧：更新雾 → 画画面
+// =====================================================================
+let lastT = 0;
+function loop(now) {
+  if (!running) return;
+  // 离上一帧过了几秒（切到别的窗口再回来时，最多按 0.1 秒算，雾不会一下子散光）
+  const dt = lastT ? Math.min(0.1, (now - lastT) / 1000) : 0;
+  lastT = now;
+  updateFog(dt);
+  draw(now);
+  requestAnimationFrame(loop);
+}
+
+// ---------- 小工具 ----------
+function show(el) { el.classList.remove('hidden'); }
+function hide(el) { el.classList.add('hidden'); }
+
+function smoothstep(a, b, x) { // 在 a~b 之间从 0 平滑地过渡到 1
+  const t = Math.min(1, Math.max(0, (x - a) / (b - a)));
+  return t * t * (3 - 2 * t);
+}
+
+function hash2(x, y) { // 给一个整数坐标一个固定的「随机数」0~1
+  let h = (Math.imul(x, 374761393) + Math.imul(y, 668265263)) | 0;
+  h = Math.imul(h ^ (h >>> 13), 1274126177);
+  return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
+}
+
+function smoothNoise(x, y) { // 平滑起伏的随机图案，结果 0~1
+  const xi = Math.floor(x), yi = Math.floor(y);
+  const fx = x - xi, fy = y - yi;
+  const u = fx * fx * (3 - 2 * fx), v = fy * fy * (3 - 2 * fy);
+  const a = hash2(xi, yi), b = hash2(xi + 1, yi), c = hash2(xi, yi + 1), d = hash2(xi + 1, yi + 1);
+  return a + (b - a) * u + (c - a) * v + (a - b - c + d) * u * v;
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+}
+</script>
+</body>
+</html>
