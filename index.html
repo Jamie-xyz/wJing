@@ -549,7 +549,7 @@
       <div class="menu-actions">
         <button id="invertBtn" class="menu-action" type="button" title="快捷键：I">反转</button>
         <button id="clearBtn" class="menu-action" type="button" title="快捷键：X">清除所有雾</button>
-        <button id="calibBtn" class="menu-action" type="button">重新校准</button>
+        <button id="calibBtn" class="menu-action" type="button">校准手势</button>
       </div>
       <div class="menu-note">快捷键：S 截屏 · R 录屏（再按停）· I 反转 · X 清雾 · D 调试</div>
     </div>
@@ -582,7 +582,7 @@
     <h1>雾镜</h1>
     <p class="lead">对着镜头哈气起雾，捏住拇指和食指擦雾</p>
     <button id="startBtn" class="btn">开始</button>
-    <p class="note">每次开始会先带你校准一下手势（十几秒，可以跳过）<br>哈气时把脸靠近镜头，张嘴「哈——」<br>画面只在你的电脑里处理，不会上传</p>
+    <p class="note">哈气时把脸靠近镜头，张嘴「哈——」<br>捏合认不准时，点底部小圆圈里的「校准手势」<br>画面只在你的电脑里处理，不会上传</p>
   </div>
 </section>
 
@@ -686,7 +686,6 @@ async function start() {
   requestAnimationFrame(loop);
   flashHint();
   show(menuEl);
-  maybeAutoGuide(); // 每次开始都先带着校准一下
 }
 
 // 底部提示：跟着手势识别的状态变
@@ -1591,7 +1590,6 @@ async function loadHands() {
     handStatus = 'failed';
   }
   if (running) flashHint();
-  maybeAutoGuide(); // 手势识别好了：已经点过「开始」的话，开始带着校准
 }
 
 // 摄像头每来一张新画面，认一次手
@@ -1838,7 +1836,7 @@ function inkOf(pen) { return assistOn && pen.ink ? pen.ink : pen.pos; } // 现�
 // 手伸到身体另一边、往下伸时，摄像头是斜着看手的，捏紧时的数值会变大（越靠边越大）；手在自己这一边时又很小。
 // 所以一个门槛不够用：校准时屏幕上依次出现 9 个圆圈（左中右 × 上中下），把手移进圆圈、像平时擦雾那样捏住不动，
 // 圆圈转满就记下这里捏住时的数值。之后手在哪，就按附近几个点的数值平滑过渡来判断。左右手分开记。
-// 每次点「开始」都会先来一遍；之后点底部小圆圈里的「重新校准手势」或按 C 重新校准，Esc 跳过，Shift + C 按两次清除
+// 点底部小圆圈里的「校准手势」或按 C 开始（不会自动弹出），Esc 跳过，Shift + C 按两次清除
 const GRID_COLS = 8, GRID_ROWS = 5, GRID_N = GRID_COLS * GRID_ROWS;  // 校准表：把镜子画面分成 8×5 格
 const GUIDE_COLS = [0.15, 0.5, 0.85], GUIDE_ROWS = [0.2, 0.5, 0.82]; // 9 个圆圈在屏幕上的位置（0~1）
 const GUIDE_ORDER = [[1, 1], [0, 1], [0, 0], [1, 0], [2, 0], [2, 1], [2, 2], [1, 2], [0, 2]]; // [列, 行]：先中间，再绕一圈
@@ -1915,7 +1913,7 @@ const guideText = $('guideText');
 const guideOther = $('guideOther');
 const guideSkip = $('guideSkip');
 guideSkip.addEventListener('click', () => endGuide());
-$('calibBtn').addEventListener('click', (e) => { // 小气泡里的「重新校准手势」按钮：不用记快捷键
+$('calibBtn').addEventListener('click', (e) => { // 小气泡里的「校准手势」按钮：不用记快捷键
   e.currentTarget.blur(); // 免得之后按空格又「点」了它一下
   if (running && !guide) startGuide();
 });
@@ -1936,19 +1934,14 @@ window.addEventListener('keydown', (e) => {
     clearArmedAt = 0;
     pinchMaps = { left: null, right: null };
     savePinchMaps();
-    flashHint('校准已清除：回到默认设置。想重新校准，点下面的小圆圈 →「重新校准手势」');
+    flashHint('校准已清除：回到默认设置。想重新校准，点下面的小圆圈 →「校准手势」');
     return;
   }
   if (!guide) startGuide();
 });
 
-// 每次点「开始」都先带着校准一下（每次坐的位置、离镜头远近、灯光都可能不一样）。
-// 不想做可以跳过，跳过就用上次存下的校准。
-// start() 和 loadHands() 谁后做完谁叫它（摄像头开好 + 手势识别下载好才能校准），所以每次开始只出现一次
-function maybeAutoGuide() {
-  if (!running || handStatus !== 'ready' || guide || drawMode === 'point') return; // 竖起食指不用捏，不用校准
-  startGuide();
-}
+// 以前每次点「开始」都会自动弹出校准；捏合改成立体、平面取小的以后认得准多了，
+// 用户说「不用强制一开始弹出，只在菜单里保留就行」，所以现在只有点小气泡里的「校准手势」或按 C 才开始
 
 // doneHands：这次已经校准好的手（校准完一只、接着校准另一只时带过去）
 function startGuide(want = null, doneHands = []) {
