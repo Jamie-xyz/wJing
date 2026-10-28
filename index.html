@@ -431,7 +431,7 @@
     <h1>雾镜</h1>
     <p class="lead">对着镜头哈气起雾，捏住拇指和食指擦雾</p>
     <button id="startBtn" class="btn">开始</button>
-    <p class="note">每次开始会先带你校准一下手势（十几秒，可以跳过）<br>画面只在你的电脑里处理，不会上传<br>测试版：哈气起雾还没做好，先按空格起雾</p>
+    <p class="note">每次开始会先带你校准一下手势（十几秒，可以跳过）<br>哈气时把脸靠近镜头，张嘴「哈——」<br>画面只在你的电脑里处理，不会上传</p>
   </div>
 </section>
 
@@ -469,6 +469,9 @@ const SETTINGS = {
   refogSeconds: 3,    // 浓度 60% 时，按空格后雾大约多少秒长到最浓；浓度越低起得越快（见 refogTime）
   pinchOn: 0.3,       // 「两指间隙 ÷ 手掌长度」小于它算捏住，捏住后大于它 + 0.06 才算松开（按 D 看数值）。没校准过的手就用它（见 pinchOnFor）
   pinchMargin: 0.1,   // 校准过的手：画面中间的门槛 = 校准时捏住的数值 + 它（最多到 pinchOn）。越小，手指张开一点就越早停笔
+  breathOpen: 0.25,   // 嘴张多大算「张嘴」（0~1，MediaPipe 的 jawOpen 和 mouthFunnel 取大的那个，按 D 看数值）。第四阶段做成「哈气灵敏度」
+  breathClose: 0.28,  // 脸多大才算「靠近镜头」：脸的宽度 ÷ 画面宽度。第四阶段做成「需要靠多近」
+  breathHold: 500,    // 张着嘴、靠近镜头，要保持多久才开始起雾（毫秒）：说话、笑一下不会起雾
   fogDensity: 0.6,    // 雾的浓度 0~1：屏幕底部的滑条调的就是它（浏览器会记住）
 };
 
@@ -478,6 +481,7 @@ const MAX_DPR = 1.5;  // 画布最多按 1.5 倍清晰度画：摄像头本身�
 // 手势识别用的 MediaPipe：版本号写死，免得它以后自己升级出问题
 const MP_URL = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@1.1.0';
 const HAND_MODEL = 'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task';
+const FACE_MODEL = 'https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task';
 
 const $ = (id) => document.getElementById(id);
 const canvas = $('view');
@@ -536,9 +540,15 @@ async function start() {
 
 // 底部提示：跟着手势识别的状态变
 function hintText() {
-  if (handStatus === 'ready') return '捏住拇指和食指擦雾（鼠标也行）· 手掌五指并拢、举着不动：清掉所有雾 · 空格起雾（测试用）· D 调试';
-  if (handStatus === 'failed') return '手势识别没加载成功（检查一下网络），先用鼠标擦吧 · 空格重新起雾';
-  return '手势识别加载中……先用鼠标擦 · 空格重新起雾';
+  const parts = [];
+  if (faceStatus === 'ready') parts.push('脸靠近镜头，张嘴「哈——」起雾');
+  else if (faceStatus === 'failed') parts.push('哈气识别没加载成功（检查一下网络），先按空格起雾');
+  else parts.push('哈气识别加载中…（先按空格起雾）');
+  if (handStatus === 'ready') parts.push('捏住拇指和食指擦雾', '五指并拢举着不动：清掉所有雾');
+  else if (handStatus === 'failed') parts.push('手势识别没加载成功（检查一下网络），先用鼠标擦');
+  else parts.push('手势识别加载中…先用鼠标擦');
+  parts.push('D 调试');
+  return parts.join(' · ');
 }
 
 let hintTimer = 0;
@@ -776,7 +786,8 @@ const CLEAR_SECONDS = 0.6; // 清除所有雾：整面雾在这么多秒里很�
 function clearAllFog() {
   refogLeft = 0; // 正在起雾的话也停下来
   clearLeft = CLEAR_SECONDS;
-  flashHint('雾都清掉了 · 空格重新起雾（测试用）');
+  breath.level = 0; // 下一口气从嘴边一小片重新开始长
+  flashHint('雾都清掉了 · 脸靠近镜头哈气，就能重新起雾');
 }
 
 // 起雾要多久：浓度越低，雾越薄，起得越快（浓度 60% 时正好是 refogSeconds，0% 时是它的 0.4 倍，大约 1.2 秒）
@@ -784,20 +795,42 @@ function refogTime() {
   return SETTINGS.refogSeconds * (0.4 + SETTINGS.fogDensity);
 }
 
-// 每一帧：雾慢慢散；如果刚按过空格，就再往上长
+// 每一帧：雾慢慢散；正在哈气的话，从嘴边往外长；刚按过空格的话，整面一起长
 function updateFog(dt) {
   const fade = dt / SETTINGS.fadeSeconds;
   const grow = refogLeft > 0 ? dt / refogTime() : 0;
   refogLeft = Math.max(0, refogLeft - dt);
   const clear = clearLeft > 0 ? dt / CLEAR_SECONDS : 0; // 清除所有雾：每处一起往下减，CLEAR_SECONDS 秒减完
   clearLeft = Math.max(0, clearLeft - dt);
-  const { density, bytes, lumpy } = fog;
-  for (let k = 0; k < density.length; k++) {
-    const speed = 0.6 + 0.8 * lumpy[k]; // 0.6~1.4 倍：各处快慢不一，看起来更自然
-    let v = density[k] + (grow - fade) * speed - clear;
-    v = v < 0 ? 0 : v > 1 ? 1 : v;
-    density[k] = v;
-    bytes[k] = v * 255;
+
+  // 哈气：嘴边长得最快，往外越来越慢；哈得越久，长到越远（breath.level），最远盖满整面镜子
+  const spread = breathSpreadTime();
+  breath.level = breath.on
+    ? Math.min(1, breath.level + dt / spread)
+    : Math.max(0, breath.level - dt / (spread * 3)); // 停下后慢慢缩回去：接着哈下一口，雾从差不多的大小接着往外扩
+  const puff = Boolean(breath.on && breath.at);
+  const reach = breathReach() / CELL;                // 现在最远长到哪（单位：格）
+  const bx = puff ? breath.at.x / CELL : 0, by = puff ? breath.at.y / CELL : 0;
+  const puffRate = dt / (refogTime() * 0.4);         // 嘴边：大约 refogTime 的 0.4 倍时间长到最浓（浓度 60% 时 1.2 秒）
+
+  const { w, h, density, bytes, lumpy } = fog;
+  for (let j = 0, k = 0; j < h; j++) {
+    for (let i = 0; i < w; i++, k++) {
+      const speed = 0.6 + 0.8 * lumpy[k]; // 0.6~1.4 倍：各处快慢不一，看起来更自然
+      let add = grow;
+      if (puff) {
+        const dx = i - bx, dy = j - by;
+        const d = Math.sqrt(dx * dx + dy * dy) * (1.2 - 0.4 * lumpy[k]); // 长得快的地方也伸得远一点：雾的边缘弯弯曲曲，不是正圆
+        if (d < reach) {
+          const t = d / reach;
+          add += puffRate * (1 - t * t * (3 - 2 * t)); // 嘴边是 1，往外平滑地降到 0
+        }
+      }
+      let v = density[k] + (add - fade) * speed - clear;
+      v = v < 0 ? 0 : v > 1 ? 1 : v;
+      density[k] = v;
+      bytes[k] = v * 255;
+    }
   }
 }
 
@@ -859,7 +892,7 @@ const stopWiping = () => { wiping = false; };
 canvas.addEventListener('pointerup', stopWiping);
 canvas.addEventListener('pointercancel', stopWiping);
 
-// 空格：重新起雾（临时测试用，第三阶段换成哈气）
+// 空格：整面重新起雾（测试用：没有摄像头、认不出脸的时候也能起雾）
 window.addEventListener('keydown', (e) => {
   if (e.code !== 'Space' || !running) return;
   e.preventDefault();
@@ -904,7 +937,7 @@ let handLandmarker = null;  // 认手的程序；还没下载好时是 null
 let handStatus = 'loading'; // loading = 下载中，ready = 能用了，failed = 失败了
 let handFresh = false;      // 摄像头有没有还没认过的新画面
 let lastHandTime = 0;       // 上一次识别用的时间戳（MediaPipe 要求它一直变大）
-let visionLib = null;       // MediaPipe 的程序库（只下载一次，第三阶段认脸也用它）
+let visionLib = null;       // MediaPipe 的程序库（只下载一次，认手、认脸都用它）
 let handsFound = [];        // 这一帧认出来的手（调试面板画点用）
 
 // 每只手一支「笔」，两只手可以同时擦
@@ -940,7 +973,7 @@ function makePen() {
   };
 }
 
-loadHands(); // 页面一打开就在后台下载（大约 8 MB），不用等点「开始」
+loadHands().then(loadFaces); // 页面一打开就在后台下载，不用等点「开始」：先下认手的（大约 8 MB），再下认脸的（大约 4 MB）
 
 function loadVision() {
   if (!visionLib) {
@@ -1031,11 +1064,11 @@ function matchPens(found, now) {
   return [];
 }
 
-// MediaPipe 说的左右手，是按「镜像过的画面」算的；我们给它的是没翻转的摄像头画面，所以要反过来
+// MediaPipe 说的左右手，就是用户真实的左右手（以前以为要反过来，用户实测：用右手时显示成了「左手」）
 function handOf(result, i) {
   const list = result.handedness || result.handednesses || [];
   const name = list[i] && list[i][0] && list[i][0].categoryName;
-  return name === 'Left' ? 'right' : name === 'Right' ? 'left' : '';
+  return name === 'Left' ? 'left' : name === 'Right' ? 'right' : '';
 }
 
 function updatePen(pen, h, now) {
@@ -1152,8 +1185,10 @@ try { // 上次校准的结果（存在这个浏览器里）
   localStorage.removeItem('fogMirror.pinchCalib');
   localStorage.removeItem('fogMirror.guideSkipped');
   const saved = JSON.parse(localStorage.getItem('fogMirror.pinchMap'));
+  // 以前左右手认反了，存的「左手」其实是右手：没有 hands: 'real' 记号的旧表，左右对调一下再用，不用重新校准
+  const swap = saved && saved.hands !== 'real';
   for (const hand of ['left', 'right']) {
-    const m = saved && saved[hand];
+    const m = saved && saved[swap ? (hand === 'left' ? 'right' : 'left') : hand];
     if (!m || !Array.isArray(m.closed) || m.closed.length !== GRID_N) continue;
     // 只认 9 个圆圈引导校准存的表；以前「自由走格子」存的不再用（那只手先用默认设置，等下次校准）
     if (m.V && m.X && m.Y && typeof m.ref === 'number') pinchMaps[hand] = { ...m, measured: m.measured || [] };
@@ -1161,7 +1196,7 @@ try { // 上次校准的结果（存在这个浏览器里）
 } catch (err) { /* 没存过或者存不了，就用默认值 */ }
 
 function savePinchMaps() {
-  try { localStorage.setItem('fogMirror.pinchMap', JSON.stringify(pinchMaps)); } catch (err) { /* 存不了也没关系 */ }
+  try { localStorage.setItem('fogMirror.pinchMap', JSON.stringify({ ...pinchMaps, hands: 'real' })); } catch (err) { /* 存不了也没关系 */ }
 }
 
 function handName(hand) { return hand === 'left' ? '左手' : '右手'; }
@@ -1531,6 +1566,129 @@ function toScreen(p) {
 }
 
 // =====================================================================
+//  4b. 哈气起雾：MediaPipe 认脸，看嘴张多大、脸离镜头多近。
+//      张着嘴、脸靠近镜头，保持半秒，就从嘴的位置往外长雾（雾怎么长见 updateFog）
+// =====================================================================
+let faceLandmarker = null;  // 认脸的程序；还没下载好时是 null
+let faceStatus = 'loading'; // loading = 下载中，ready = 能用了，failed = 失败了
+let faceFresh = false;      // 摄像头有没有还没认过脸的新画面
+let lastFaceTime = 0;       // 上一次认脸用的时间戳（和认手分开算，MediaPipe 要求它一直变大）
+let face = null;            // 这一次认出来的脸（没认出来是 null），见 trackFace
+
+// 认手的下载好以后再下载这个，先让擦雾能用
+async function loadFaces() {
+  try {
+    const { lib, fileset } = await loadVision();
+    const create = (delegate) => lib.FaceLandmarker.createFromOptions(fileset, {
+      baseOptions: { modelAssetPath: FACE_MODEL, delegate },
+      runningMode: 'VIDEO',
+      numFaces: 1,
+      outputFaceBlendshapes: true, // 要它算出「嘴张多大、笑没笑」这些表情数值
+    });
+    try {
+      faceLandmarker = await create('GPU');
+    } catch (err) {
+      console.warn('认脸：显卡模式用不了，改用 CPU', err);
+      faceLandmarker = await create('CPU');
+    }
+    faceStatus = 'ready';
+  } catch (err) {
+    console.error('认脸加载失败', err);
+    faceStatus = 'failed';
+  }
+  if (running) flashHint();
+}
+
+// 认一次脸：嘴张多大、笑没笑、脸多大、嘴在屏幕上哪里
+function trackFace(now) {
+  const t = Math.max(now, lastFaceTime + 1);
+  lastFaceTime = t;
+  faceFresh = false;
+  let result;
+  try {
+    result = faceLandmarker.detectForVideo(video, t);
+  } catch (err) {
+    console.error('认脸出错', err);
+    faceLandmarker = null;
+    faceStatus = 'failed';
+    face = null;
+    flashHint();
+    return;
+  }
+  stats.faces++;
+  const lm = result.faceLandmarks && result.faceLandmarks[0];
+  const shapes = result.faceBlendshapes && result.faceBlendshapes[0];
+  face = null;
+  if (lm && shapes) {
+    const score = {}; // 52 种表情，每种 0~1
+    for (const c of shapes.categories) score[c.categoryName] = c.score;
+    let minX = 1, maxX = 0;
+    for (const p of lm) {
+      if (p.x < minX) minX = p.x;
+      if (p.x > maxX) maxX = p.x;
+    }
+    const jaw = score.jawOpen || 0, funnel = score.mouthFunnel || 0;
+    face = {
+      jaw,                          // 下巴往下张开多少
+      funnel,                       // 嘴唇撅成 O 形多少
+      open: Math.max(jaw, funnel),  // 嘴张多大：张大嘴「哈——」、撅成 O 形「呼——」都算
+      smile: Math.max(score.mouthSmileLeft || 0, score.mouthSmileRight || 0),
+      eyesClosed: ((score.eyeBlinkLeft || 0) + (score.eyeBlinkRight || 0)) / 2,
+      size: maxX - minX,            // 脸的宽度 ÷ 画面宽度：越靠近镜头越大
+      mouth: toScreen({ x: (lm[13].x + lm[14].x) / 2, y: (lm[13].y + lm[14].y) / 2 }), // 上下嘴唇中间（13、14 号点）
+    };
+  }
+  updateBreath(now);
+}
+
+// ---------- 哈气：嘴张开 + 脸靠近镜头 + 保持半秒，才算「哈气中」 ----------
+const breath = {
+  on: false,  // 现在算不算哈气中
+  since: 0,   // 从什么时候开始一直满足条件（满 breathHold 才算哈气）
+  okAt: 0,    // 最后一次满足条件的时间
+  level: 0,   // 雾扩得多远（0~1）：哈得越久越大，停下后慢慢缩回去（见 updateFog）
+  at: null,   // 嘴在屏幕上的位置（平滑过的），雾从这里长出来
+};
+
+// 这张脸现在是不是「哈气」的样子
+function breathPose(f) {
+  if (!f) return false;
+  if (breath.on) { // 已经在哈气了：放宽一点，嘴稍微动一下、头稍微往后一点不会断
+    return f.open >= SETTINGS.breathOpen - 0.08 && f.size >= SETTINGS.breathClose * 0.9 && f.smile < 0.6;
+  }
+  return f.open >= SETTINGS.breathOpen
+    && f.size >= SETTINGS.breathClose
+    && f.smile < 0.5                            // 张着嘴大笑不算
+    && !(f.open > 0.75 && f.eyesClosed > 0.5);  // 嘴张得特别大、眼睛又眯着：多半是在打哈欠
+}
+
+function updateBreath(now) {
+  if (breathPose(face)) {
+    breath.okAt = now;
+    if (!breath.since) breath.since = now;
+    if (now - breath.since >= SETTINGS.breathHold) breath.on = true;
+    const m = face.mouth;
+    breath.at = breath.at // 平滑一下，嘴的位置不抖
+      ? { x: breath.at.x + (m.x - breath.at.x) * 0.5, y: breath.at.y + (m.y - breath.at.y) * 0.5 }
+      : { x: m.x, y: m.y };
+  } else if (!breath.on || now - breath.okAt > 200) {
+    // 还没开始哈气时，一不满足就从头数（说话时嘴一张一合，凑不满半秒）；
+    // 已经在哈气了，0.2 秒以内偶尔没对上不算停
+    breath.on = false;
+    breath.since = 0;
+  }
+}
+
+// 哈气时雾扩到最远要哈多久：跟着浓度变，浓度越低雾越薄、起得越快（浓度 60% 时大约 7.5 秒，可以分几口气哈）
+function breathSpreadTime() { return refogTime() * 2.5; }
+
+// 这口气的雾现在最远长到哪（像素）：刚开始是嘴边一小片，哈得越久越远，最远超过整面镜子
+function breathReach() {
+  const r0 = Math.min(W, H) * 0.1;
+  return r0 + (Math.hypot(W, H) * 1.4 - r0) * breath.level;
+}
+
+// =====================================================================
 //  5. WebGL：把「清晰镜像」和「磨砂镜像」按雾的浓度混在一起
 // =====================================================================
 let gl = null;
@@ -1815,6 +1973,7 @@ function watchVideoFrames() {
   const onFrame = () => {
     videoFresh = true;
     handFresh = true;
+    faceFresh = true;
     video.requestVideoFrameCallback(onFrame);
   };
   video.requestVideoFrameCallback(onFrame);
@@ -1827,7 +1986,7 @@ function draw(now) {
 
   const overdue = now - lastVideoAt > 100; // 万一「新画面通知」没来，最多 0.1 秒也更新一次
   if (!canWatchFrames || videoFresh || overdue) {
-    if (overdue) handFresh = true;
+    if (overdue) handFresh = faceFresh = true;
     videoFresh = false;
     lastVideoAt = now;
     gl.bindTexture(gl.TEXTURE_2D, videoTex);
@@ -1853,7 +2012,7 @@ function draw(now) {
 }
 
 // =====================================================================
-//  6. 每一帧：认手 → 更新雾 → 画画面 → 挪小圆圈
+//  6. 每一帧：认手、认脸 → 更新雾 → 画画面 → 挪小圆圈
 // =====================================================================
 let lastT = 0;
 function loop(now) {
@@ -1861,11 +2020,20 @@ function loop(now) {
   // 离上一帧过了几秒（切到别的窗口再回来时，最多按 0.1 秒算，雾不会一下子散光）
   const dt = lastT ? Math.min(0.1, (now - lastT) / 1000) : 0;
   lastT = now;
-  // 摄像头有新画面才认手（不支持「新画面通知」的浏览器，就每 33 毫秒认一次）
+  // 摄像头有新画面才认手（不支持「新画面通知」的浏览器，就每 33 毫秒认一次）。
+  // 认脸不用那么勤（一秒十几次就够），而且和认手错开在不同的帧里做，一帧里的活儿不会太多
   const handDue = canWatchFrames ? handFresh : now - lastHandTime > 33;
+  const faceDue = faceLandmarker && (!canWatchFrames || faceFresh) && now - lastFaceTime > 60;
   if (handLandmarker && handDue) {
     handFresh = false;
     trackHand(now);
+    if (faceDue && now - lastFaceTime > 90) trackFace(now); // 屏幕一秒只刷新 30 次（比如省电模式）、每一帧都在认手时，也保证一秒认 10 次脸
+  } else if (faceDue) {
+    trackFace(now);
+  }
+  if (breath.on && now - breath.okAt > 300) { // 认脸停了（出错、没下载好）：别一直起雾
+    breath.on = false;
+    breath.since = 0;
   }
   updateFog(dt);
   draw(now);
@@ -1885,7 +2053,7 @@ const dots = $('debugDots');
 const dotsCtx = dots.getContext('2d');
 let debugOn = false;
 let lastDebugAt = 0;
-const stats = { since: 0, frames: 0, hands: 0, fps: 0, handRate: 0 }; // 数一数每秒画了几帧、认了几次手
+const stats = { since: 0, frames: 0, hands: 0, faces: 0, fps: 0, handRate: 0, faceRate: 0 }; // 数一数每秒画了几帧、认了几次手和脸
 
 window.addEventListener('keydown', (e) => {
   if (e.code !== 'KeyD' || e.repeat) return;
@@ -1907,19 +2075,25 @@ function updateDebug(now) {
     const sec = (now - stats.since) / 1000;
     stats.fps = Math.round(stats.frames / sec);
     stats.handRate = Math.round(stats.hands / sec);
+    stats.faceRate = Math.round(stats.faces / sec);
     stats.frames = 0;
     stats.hands = 0;
+    stats.faces = 0;
     stats.since = now;
   }
   if (debugOn && now - lastDebugAt > 100) { // 数字一秒刷新 10 次，再快就看不清了
     lastDebugAt = now;
-    renderDebug();
+    renderDebug(now);
   }
 }
 
 function mapInfo(map) { return map ? `已校准（实测 ${map.measured.filter(Boolean).length} 格）` : '未校准'; }
 
-function renderDebug() {
+function renderDebug(now = performance.now()) {
+  const loadText = (status, rate) => (status === 'ready' ? `${rate} 次/秒` : status === 'loading' ? '加载中…' : '加载失败');
+  const breathText = breath.on ? `<span class="yes">哈气中</span> · 雾扩到 ${Math.round(breath.level * 100)}%`
+    : breath.since ? `准备中（再保持 ${Math.max(0, (SETTINGS.breathHold - (now - breath.since)) / 1000).toFixed(1)} 秒）`
+    : '没有';
   const handText = (pen) => (pen.seen
     ? `${handName(pen.hand)} ${pen.ratio.toFixed(2)} · ${pen.pinched ? '<span class="yes">捏住</span>' : '没捏'}（门槛 ${pen.on.toFixed(2)}）`
     : '—');
@@ -1928,7 +2102,12 @@ function renderDebug() {
     : '—');
   const rows = [
     ['帧率', `${stats.fps} 帧/秒`],
-    ['认手', handStatus === 'ready' ? `${stats.handRate} 次/秒` : handStatus === 'loading' ? '加载中…' : '加载失败'],
+    ['认手', loadText(handStatus, stats.handRate)],
+    ['认脸', loadText(faceStatus, stats.faceRate)],
+    ['嘴张开', face ? `${face.open.toFixed(2)}（要 ≥ ${SETTINGS.breathOpen.toFixed(2)}）· 张嘴 ${face.jaw.toFixed(2)} · 撅嘴 ${face.funnel.toFixed(2)}` : '没认出脸'],
+    ['笑', face ? `${face.smile.toFixed(2)}（大于 0.50 不算哈气）` : '—'],
+    ['脸的大小', face ? `${face.size.toFixed(2)}（要 ≥ ${SETTINGS.breathClose.toFixed(2)}，越靠近镜头越大）` : '—'],
+    ['哈气', breathText],
     ['画面里的手', `${handsFound.length} 只`],
     ['手 1 捏合', handText(pens[0])],
     ['手 2 捏合', handText(pens[1])],
@@ -1936,7 +2115,7 @@ function renderDebug() {
     ['手 2 手掌', palmText(pens[1])],
     ['清雾手势', '伸直大于 0.90、指缝小于 0.42 算五指并拢，举着不动 1 秒'],
     ['捏合校准', `右手${mapInfo(pinchMaps.right)} · 左手${mapInfo(pinchMaps.left)}`],
-    ['校准方法', 'C 重新校准 · Esc 跳过 · Shift+C 按两次清除'],
+    ['快捷键', '空格 整面起雾（测试用）· C 重新校准 · Esc 跳过 · Shift+C 按两次清除校准'],
   ];
   debugRows.innerHTML = rows.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('');
 }
@@ -1955,6 +2134,21 @@ function drawDots() {
   drawGuide();
   if (!debugOn) return;
   drawGrid();
+  if (face) { // 嘴的位置：蓝点，哈气中变绿
+    dotsCtx.beginPath();
+    dotsCtx.arc(face.mouth.x, face.mouth.y, 7, 0, Math.PI * 2);
+    dotsCtx.fillStyle = breath.on ? 'rgba(126, 226, 168, 0.95)' : 'rgba(108, 196, 255, 0.95)';
+    dotsCtx.fill();
+  }
+  if (breath.on && breath.at) { // 哈气中：虚线圈是这口气的雾现在最远长到哪
+    dotsCtx.lineWidth = 2;
+    dotsCtx.setLineDash([6, 8]);
+    dotsCtx.strokeStyle = 'rgba(126, 226, 168, 0.8)';
+    dotsCtx.beginPath();
+    dotsCtx.arc(breath.at.x, breath.at.y, breathReach(), 0, Math.PI * 2);
+    dotsCtx.stroke();
+    dotsCtx.setLineDash([]);
+  }
   for (const { lm } of handsFound) {
     lm.forEach((p, i) => {
       const s = toScreen(p);
