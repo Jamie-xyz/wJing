@@ -314,41 +314,21 @@
   }
   .brush-preview.show { opacity: 1; }
 
-  /* ---------- 手掌左右来回抹：手掌上转一圈进度（抹一下转三分之一），转满就清除所有雾 ---------- */
-  .palm-ring {
+  /* ---------- 手掌张开在雾上抹：一个淡淡的圆圈，圈住正在慢慢擦淡的那一片（和手一样大） ---------- */
+  .palm-zone {
     position: fixed;
     left: 0;
     top: 0;
     z-index: 3;
-    width: 84px;
-    height: 84px;
-    margin: -42px 0 0 -42px;
+    border: 2px solid rgba(255, 255, 255, 0.4);
+    border-radius: 50%;
+    box-shadow: inset 0 0 24px rgba(255, 255, 255, 0.16), 0 0 10px rgba(0, 0, 0, 0.12);
     pointer-events: none;
     opacity: 0;
-    transition: opacity 0.2s ease;
+    transition: opacity 0.25s ease;
     will-change: transform;
   }
-  .palm-ring.show { opacity: 1; }
-  .palm-ring svg { display: block; width: 100%; height: 100%; transform: rotate(-90deg); } /* 从正上方开始转 */
-  .palm-ring circle { fill: none; stroke-width: 6; }
-  .palm-ring .track { stroke: rgba(255, 255, 255, 0.35); }
-  .palm-ring .bar { /* 226.2 = 圆周长（半径 36）；每抹一下，进度平滑地往前走一段 */
-    stroke: rgba(126, 226, 168, 0.95);
-    stroke-linecap: round;
-    stroke-dasharray: 226.2;
-    stroke-dashoffset: 226.2;
-    transition: stroke-dashoffset 0.25s ease;
-  }
-  .palm-ring span {
-    position: absolute;
-    left: 50%;
-    top: calc(100% + 6px);
-    transform: translateX(-50%);
-    font-size: 13px;
-    white-space: nowrap;
-    color: #fff;
-    text-shadow: 0 1px 4px rgba(0, 0, 0, 0.6);
-  }
+  .palm-zone.show { opacity: 1; }
 
   /* ---------- 录屏中的小标记（右上角，不会录进视频里）；截屏时屏幕白闪一下 ---------- */
   .rec-badge {
@@ -492,13 +472,7 @@
 
 <div id="brushPreview" class="brush-preview"></div>
 
-<div id="palmRing" class="palm-ring">
-  <svg viewBox="0 0 84 84" aria-hidden="true">
-    <circle class="track" cx="42" cy="42" r="36"></circle>
-    <circle id="palmBar" class="bar" cx="42" cy="42" r="36"></circle>
-  </svg>
-  <span id="palmLabel"></span>
-</div>
+<div id="palmZone" class="palm-zone"></div>
 
 <div class="bottom">
   <div id="hint" class="hint hidden"></div>
@@ -518,6 +492,11 @@
         <span>擦痕粗细</span>
         <input id="brush" type="range" min="0" max="100" step="1" value="53">
         <output id="brushValue">53%</output>
+      </label>
+      <label class="slider">
+        <span>手掌擦雾</span>
+        <input id="palmSpeed" type="range" min="0" max="100" step="1" value="40">
+        <output id="palmSpeedValue">4 秒</output>
       </label>
       <label class="slider">
         <span>哈气灵敏度</span>
@@ -623,6 +602,7 @@ const SETTINGS = {
   breathOpen: 0.25,   // 嘴张多大算「张嘴」（0~1，MediaPipe 的 jawOpen 和 mouthFunnel 取大的那个，按 D 看数值）。第四阶段做成「哈气灵敏度」
   breathClose: 0.28,  // 脸多大才算「靠近镜头」：脸的宽度 ÷ 画面宽度。第四阶段做成「需要靠多近」
   breathHold: 500,    // 张着嘴、靠近镜头，要保持多久才开始起雾（毫秒）：说话、笑一下不会起雾
+  palmSeconds: 4,     // 手掌张开在雾上，手掌下面一处雾要多少秒擦干净（小气泡里的「手掌擦雾」滑条）
   fogDensity: 0.6,    // 雾的浓度 0~1：屏幕底部的滑条调的就是它（浏览器会记住）
 };
 
@@ -695,7 +675,7 @@ function hintText() {
   else if (faceStatus === 'failed') parts.push('哈气识别没加载成功（检查一下网络），先按空格起雾');
   else parts.push('哈气识别加载中…（先按空格起雾）');
   if (handStatus === 'ready') {
-    parts.push(drawMode === 'point' ? '竖起食指擦雾（伸出中指就停）' : '捏住拇指和食指擦雾', '手掌张开左右来回抹：雾越抹越淡，抹 6 下全清掉（按 X 一下清掉）');
+    parts.push(drawMode === 'point' ? '竖起食指擦雾（伸出中指就停）' : '捏住拇指和食指擦雾', '手掌张开在雾上慢慢抹：手掌下面的雾慢慢变淡 · X 清掉所有雾');
   }
   else if (handStatus === 'failed') parts.push('手势识别没加载成功（检查一下网络），先用鼠标擦');
   else parts.push('手势识别加载中…先用鼠标擦');
@@ -740,6 +720,14 @@ const SLIDERS = [
     toValue: (pct) => 600 * Math.pow(30 / 600, pct / 100), // 越往右散得越快：最浓的雾放着不管，10 分钟 ~ 30 秒散完
     toPct: (v) => (Math.log(v / 600) / Math.log(30 / 600)) * 100,
     format: (v) => (v >= 90 ? `${Math.round(v / 60)} 分钟` : `${Math.round(v)} 秒`), // 显示「多久散完」，比百分比好懂
+  },
+  {
+    input: $('palmSpeed'), output: $('palmSpeedValue'), key: 'fogMirror.palmSeconds',
+    get: () => SETTINGS.palmSeconds,
+    set: (v) => { SETTINGS.palmSeconds = v; },
+    toValue: (pct) => 10 * Math.pow(0.1, pct / 100), // 越往右擦得越快：一处雾 10 秒 ~ 1 秒擦干净
+    toPct: (v) => (Math.log(v / 10) / Math.log(0.1)) * 100,
+    format: (v) => `${v >= 3 ? Math.round(v) : v.toFixed(1)} 秒`, // 显示「一处多少秒擦干净」
   },
   {
     input: $('breathSens'), output: $('breathSensValue'), key: 'fogMirror.breathOpen',
@@ -1017,7 +1005,7 @@ let refogLeft = 0; // 按空格后，还要继续起雾多少秒
 let clearLeft = 0; // 「清除所有雾」之后，还要继续散多少秒
 const CLEAR_SECONDS = 0.6; // 清除所有雾：整面雾在这么多秒里很快淡掉（一下子没了看起来太突然）
 
-// 清除所有雾：小气泡里的按钮、X 键，或者手掌左右来回抹满 6 下（见 updatePalm）
+// 清除所有雾：小气泡里的按钮，或者 X 键（只擦淡一片用手掌，见 thinPalms）
 function clearAllFog() {
   refogLeft = 0; // 正在起雾的话也停下来
   clearLeft = CLEAR_SECONDS;
@@ -1066,26 +1054,56 @@ function toggleInvert() {
   fogAnim = { from: density.slice(), to, t: 0, seconds: INVERT_SECONDS };
 }
 
-// ---------- 手掌来回抹：每抹一下整面雾淡一层，抹满 WAVE_PASSES 下全清掉（见 updatePalm） ----------
-// 用户的想法：「不止抹 3 下，多几下才会全部清掉，前几下是慢慢浅一点」。
-// 「淡一层」按看起来的雾算：着色器里雾盖住画面的程度大约是 smoothstep(0, 0.6, 浓度 × k)，
-// 0.6 以上看起来都是满的，所以直接把浓度减一点，前几下会看不出变化。
-// 这里先算出每格「看起来有多少雾」，拿掉 fraction 那么多，再倒算回浓度；水珠也按同样的比例少掉一些
-function thinFog(fraction) {
+// ---------- 手掌张开在雾上抹（或者捂着不动）：手掌下面那一片雾慢慢变淡，像用手把镜子上的雾慢慢擦掉 ----------
+// 用户要的是「范围内」「跟哈气一样慢慢的」，不要整面一起淡（试过「来回抹一下整面淡一层」，用户说不对）。
+// 范围和手一样大（见 handZone），手掌张开 0.3 秒后才开始（见 updatePalm），快慢是小气泡里的「手掌擦雾」滑条。
+//
+// 「看起来有多少雾」（0~1）：着色器里雾盖住画面的程度是 smoothstep(0, 0.6, m)（m = 浓度 × k），
+// m 超过 0.6 以后看起来已经盖满了，只是白纱更厚、更糊。直接减浓度的话，前一半时间几乎看不出在变。
+// 所以把前 85% 算成「盖住多少」，后 15% 算成「白纱多厚」，按这个匀速往下减，从一开始就看得出在变淡
+// （试过 75% / 25%：头一秒只是白纱变薄，看着像没反应）
+function fogLook(m) {
+  return m <= 0.6 ? 0.85 * smoothstep(0, 0.6, m) : 0.85 + 0.15 * Math.min(1, (m - 0.6) / 0.4);
+}
+
+function fogFromLook(v) { // fogLook 倒过来：看起来是 v，浓度（乘过 k 的）应该是多少
+  if (v <= 0) return 0;
+  if (v <= 0.85) return 0.6 * (0.5 - Math.sin(Math.asin(1 - 2 * (v / 0.85)) / 3)); // smoothstep 倒过来算
+  return 0.6 + 0.4 * Math.min(1, (v - 0.85) / 0.15);
+}
+
+// 每一帧：正在擦雾的手掌下面，雾按「看起来的雾」每秒少 1/palmSeconds（手掌中间最快，边上慢慢过渡到不变），
+// 那一片里的水珠也慢慢被抹掉
+function thinPalms(dt) {
   const k = Math.min(1, 0.3 + 1.2 * SETTINGS.fogDensity); // 和着色器里一样
-  const { density } = fog;
-  const to = new Float32Array(density.length);
-  for (let i = 0; i < density.length; i++) {
-    const v = smoothstep(0, 0.6, density[i] * k) * (1 - fraction); // 看起来的雾，拿掉一部分
-    const t = 0.5 - Math.sin(Math.asin(1 - 2 * v) / 3);           // 把 smoothstep 倒过来算
-    to[i] = Math.min(density[i], (0.6 * t) / k);
+  const rate = dt / SETTINGS.palmSeconds;
+  const { w, h, density } = fog;
+  for (const pen of pens) {
+    if (!pen.palmOn) continue;
+    const { x, y, r } = pen.palmZone;
+    const i0 = Math.max(0, Math.floor((x - r) / CELL)), i1 = Math.min(w - 1, Math.floor((x + r) / CELL));
+    const j0 = Math.max(0, Math.floor((y - r) / CELL)), j1 = Math.min(h - 1, Math.floor((y + r) / CELL));
+    for (let j = j0; j <= j1; j++) {
+      for (let i = i0; i <= i1; i++) {
+        const dx = (i + 0.5) * CELL - x, dy = (j + 0.5) * CELL - y;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        if (dist >= r) continue;
+        const kk = j * w + i, d = density[kk];
+        if (d <= 0) continue;
+        const v = fogLook(d * k) - rate * (1 - smoothstep(0.55 * r, r, dist));
+        density[kk] = Math.min(d, fogFromLook(v) / k);
+      }
+    }
+    for (const list of [water.drops, water.drips]) {
+      for (let n = list.length - 1; n >= 0; n--) {
+        const p = list[n];
+        if (Math.hypot(p.x - x, p.y - y) < r * 0.8 && Math.random() < rate * 2) {
+          list.splice(n, 1);
+          water.dirty = true;
+        }
+      }
+    }
   }
-  water.drops = water.drops.filter(() => Math.random() > fraction);
-  water.drips = water.drips.filter(() => Math.random() > fraction);
-  water.dirty = true;
-  refogLeft = 0;
-  clearLeft = 0;
-  fogAnim = { from: density.slice(), to, t: 0, seconds: 0.35 };
 }
 
 // 起雾要多久：浓度越低，雾越薄，起得越快（浓度 60% 时正好是 refogSeconds，0% 时是它的 0.4 倍，大约 1.2 秒）
@@ -1569,8 +1587,10 @@ function makePen() {
     pausedAt: 0,    // 手指刚开始张开、先停笔的时间（0 = 没停）
     releaseAt: 0,   // 从什么时候开始一直是松开的样子（满 0.2 秒才真的算松手）
     palm: null,     // 手掌的样子：{ straight: 四根手指多直, open: 算不算张开的手掌 }（见 palmShape）
-    palmPos: null,  // 手掌中间在屏幕上的位置（进度圈画在这）
-    wave: { active: false, passes: 0, okAt: 0 }, // 手掌来回抹了几下（见 updatePalm）
+    palmZone: null, // 手掌擦雾的范围：{ x, y, r }（屏幕上，见 handZone）
+    palmSince: 0,   // 手掌从什么时候开始一直张开着（0 = 没张开）
+    palmOkAt: 0,    // 最后一次看到张开的手掌
+    palmOn: false,  // 正在用手掌擦雾（张开满 0.3 秒）
     ink: null,      // 辅助书写时墨迹在哪：被「绳子」拉着走（见 followInk）
     inkShown: null, // 墨迹小圆点画在哪（比 ink 再顺滑一点）
   };
@@ -1643,7 +1663,7 @@ function trackHand(now) {
       r3: pinch.r3,                    // 立体量的
       fingers,
       palm: palmShape(fingers),
-      palmPos: toScreen({ x: (lm[0].x + lm[9].x) / 2, y: (lm[0].y + lm[9].y) / 2 }), // 手掌中间（手腕和中指根的中点）
+      palmZone: handZone(lm),
       hand: handOf(result, i),
     };
   });
@@ -1706,7 +1726,8 @@ function updatePen(pen, h, now) {
   if (guide) {
     guideFeed(pen);
     pen.votes = 0;
-    resetWave(pen);
+    pen.palmSince = 0;
+    pen.palmOn = false;
     return;
   }
 
@@ -1760,59 +1781,32 @@ function updatePen(pen, h, now) {
     }
   }
 
-  // ③ 手掌张开、左右来回抹：雾越抹越淡，抹满 6 下全清掉
+  // ③ 手掌张开在雾上抹：手掌下面那一片雾慢慢变淡
   updatePalm(pen, h, now);
 }
 
-// ---------- 手掌张开、左右来回抹：每抹一下整面雾淡一层，抹满 6 下全清掉（就像擦真的镜子） ----------
-// 张开的手最好认（以前要五指并拢、举着不动：手指挨在一起时反而认不准，用户反馈「识别不太出来」）；
-// 来回抹的动作平时也不会不小心做出来。往一个方向走够一段算「一下」，手掌上的进度圈跟着转。
-// 以前抹 3 下一下子清光；用户想要「多几下才会全部清掉，前几下是慢慢浅一点」（见 thinFog）
-const WAVE_PASSES = 6; // 要抹几下才全清掉
-function waveStep() { return Math.max(60, W * 0.12); } // 每一下至少要横着走多远（像素）
-
+// ---------- 手掌张开在雾上抹（或者捂着不动）：手掌下面那一片雾慢慢变淡（雾怎么变淡见 thinPalms） ----------
+// 张开的手最好认（以前要五指并拢：手指挨在一起时反而认不准，用户反馈「识别不太出来」）。
+// 手掌张开满 0.3 秒才开始擦：举手准备捏、手一晃而过的时候不会擦淡。一下子清掉所有雾还是按 X 或点小气泡里的按钮
 function updatePalm(pen, h, now) {
-  const w = pen.wave;
   if (!h.palm.open || pen.pinched || pen.ratio < 0.5) { // 不是张开的手掌（或者正在擦、快要捏上）
-    if (now - w.okAt > 250) resetWave(pen); // 抹得快时偶尔几帧认不准，不算断
+    if (now - pen.palmOkAt > 200) { // 偶尔几帧认不准不算
+      pen.palmSince = 0;
+      pen.palmOn = false;
+    }
     return;
   }
-  w.okAt = now;
-  pen.palmPos = h.palmPos;
-  const x = h.palmPos.x, step = waveStep();
-  if (!w.active || now - w.movedAt > 3000) { // 刚张开手，或者停了 3 秒没抹：从这里重新数（中间歇一下不算）
-    Object.assign(w, { active: true, start: x, peak: x, dir: 0, passes: 0, counted: false, movedAt: now });
-    return;
-  }
-  if (w.dir === 0) { // 还不知道往哪边抹
-    if (Math.abs(x - w.start) > step * 0.25) {
-      w.dir = Math.sign(x - w.start);
-      w.peak = x;
-      w.movedAt = now;
-    }
-  } else if ((x - w.peak) * w.dir > 0) { // 还在往同一边走
-    if ((x - w.peak) * w.dir > 5) w.movedAt = now;
-    w.peak = x;
-  } else if ((w.peak - x) * w.dir > Math.max(20, step * 0.25)) { // 掉头了：从刚才最远的地方开始算下一下
-    w.dir = -w.dir;
-    w.start = w.peak;
-    w.peak = x;
-    w.counted = false;
-    w.movedAt = now;
-  }
-  if (w.dir !== 0 && !w.counted && (w.peak - w.start) * w.dir >= step) { // 这一下走够远了
-    w.counted = true;
-    w.passes++;
-    if (w.passes >= WAVE_PASSES) {
-      resetWave(pen);
-      clearAllFog();
-    } else {
-      thinFog(1 / (WAVE_PASSES - w.passes + 1)); // 每一下拿掉「剩下的雾」的 1/剩下几下：每下淡得一样多，最后一下正好清完
-    }
-  }
+  pen.palmOkAt = now;
+  pen.palmZone = h.palmZone;
+  if (!pen.palmSince) pen.palmSince = now;
+  pen.palmOn = now - pen.palmSince >= 300;
 }
 
-function resetWave(pen) { pen.wave = { active: false, passes: 0, okAt: pen.wave.okAt }; }
+// 手掌擦雾的范围：手腕到中指尖的中点为圆心，半径是这段长度的一半，差不多盖住整只手（手大、离镜头近，范围就大）
+function handZone(lm) {
+  const a = toScreen(lm[0]), b = toScreen(lm[12]);
+  return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2, r: Math.max(30, 0.5 * Math.hypot(b.x - a.x, b.y - a.y)) };
+}
 
 // 四根手指（食指、中指、无名指、小指）各自有多直：指根到指尖的直线距离 ÷ 三节长度加起来。
 // 伸直时差不多是 1，弯起来就小（握拳大约 0.3~0.5）
@@ -2113,7 +2107,10 @@ function penMissing(pen, now) {
     pen.lostAt = now;
   }
   pen.votes = 0;
-  if (now - pen.wave.okAt > 300) resetWave(pen); // 手不见了一会儿：来回抹的从头数
+  if (now - pen.palmOkAt > 300) { // 手不见了一会儿：手掌擦雾也停下
+    pen.palmSince = 0;
+    pen.palmOn = false;
+  }
   // 短暂看不到（比如手动得太快、画面糊了）先不松开；超过 0.25 秒才算松手
   if (pen.pinched && now - pen.lostAt > 250) {
     pen.pinched = false;
@@ -2213,7 +2210,7 @@ function catmullRom(p0, p1, p2, p3, u) {
 function drawPens(dt, now) {
   const k = 1 - Math.exp(-dt * 30); // 每帧往笔尖靠近一点：比一秒 30 次的识别结果看起来更顺
   for (const pen of pens) {
-    const visible = handStatus === 'ready' && pen.pos && (pen.seen || now - pen.lostAt < 300) && !waving(pen, now);
+    const visible = handStatus === 'ready' && pen.pos && (pen.seen || now - pen.lostAt < 300) && !pen.palmOn;
     pen.el.classList.toggle('show', Boolean(visible));
     // 先停笔超过 0.1 秒就变空心，和擦痕一起停（偶尔一两帧数值跳一下不会闪）
     pen.el.classList.toggle('pinch', pen.pinched && !(pen.pausedAt && now - pen.pausedAt >= 100));
@@ -2245,30 +2242,25 @@ function drawPens(dt, now) {
   }
 }
 
-// 手掌来回抹的时候：手掌上转一圈进度（抹一下转三分之一，抹满就清除所有雾），这时那只手的小圆圈先藏起来
-const palmRing = $('palmRing');
-const palmBar = $('palmBar');
-const palmLabel = $('palmLabel');
-const PALM_RING = 226.2; // 进度圈的周长（SVG 里半径 36）
-let palmShown = null;    // 进度圈画在哪（比识别结果再顺滑一点）
-function waving(pen, now) { // 抹了至少一下才显示（手掌只是张开着的时候不显示）
-  return Boolean(!guide && pen.wave.active && pen.wave.passes > 0 && now - pen.wave.okAt < 250);
-}
-function drawPalmRing(dt, now) {
-  const pen = pens.find((p) => waving(p, now));
-  palmRing.classList.toggle('show', Boolean(pen));
+// 手掌在擦雾的时候：画一个淡淡的圆圈，圈住正在擦淡的那一片（比识别结果再顺滑一点），这时那只手的小圆圈先藏起来
+const palmZoneEl = $('palmZone');
+let zoneShown = null;
+function drawPalmZone(dt) {
+  const pen = guide ? null : pens.find((p) => p.palmOn);
+  palmZoneEl.classList.toggle('show', Boolean(pen));
   if (!pen) {
-    palmShown = null;
+    zoneShown = null;
     return;
   }
-  const left = WAVE_PASSES - pen.wave.passes;
-  palmLabel.textContent = `越抹越淡 · 再抹 ${left} 下全清掉`;
-  palmBar.style.strokeDashoffset = (PALM_RING * (left / WAVE_PASSES)).toFixed(1);
-  if (!palmShown) palmShown = { x: pen.palmPos.x, y: pen.palmPos.y };
-  const k = 1 - Math.exp(-dt * 30);
-  palmShown.x += (pen.palmPos.x - palmShown.x) * k;
-  palmShown.y += (pen.palmPos.y - palmShown.y) * k;
-  palmRing.style.transform = `translate(${palmShown.x.toFixed(1)}px, ${palmShown.y.toFixed(1)}px)`;
+  const z = pen.palmZone;
+  if (!zoneShown) zoneShown = { x: z.x, y: z.y, r: z.r };
+  const k = 1 - Math.exp(-dt * 20);
+  zoneShown.x += (z.x - zoneShown.x) * k;
+  zoneShown.y += (z.y - zoneShown.y) * k;
+  zoneShown.r += (z.r - zoneShown.r) * k;
+  const { x, y, r } = zoneShown;
+  palmZoneEl.style.width = palmZoneEl.style.height = `${Math.round(2 * r)}px`;
+  palmZoneEl.style.transform = `translate(${(x - r).toFixed(1)}px, ${(y - r).toFixed(1)}px)`;
 }
 
 // 「铺满裁切」：摄像头画面等比放大到刚好盖满窗口，多出来的边切掉，所以不会变形
@@ -2758,12 +2750,13 @@ function loop(now) {
     breath.since = 0;
   }
   updateWater(dt); // 先让水珠流：流过的地方冲掉的雾，这一帧就画出来
+  thinPalms(dt);   // 手掌下面的雾慢慢变淡
   updateFog(dt);
   draw(now);
   drawWater(now);
   captureFrame(); // 截屏、录屏：镜子画面只有刚画完的这一刻能取
   drawPens(dt, now);
-  drawPalmRing(dt, now);
+  drawPalmZone(dt);
   updateDebug(now);
   if (debugOn || guide) drawDots(); // 手上的小点、校准圆圈：每帧重画，动起来才顺
   requestAnimationFrame(loop);
@@ -2829,7 +2822,7 @@ function renderDebug(now = performance.now()) {
       + `${pen.pinched ? '<span class="yes">捏住</span>' : '没捏'}（门槛 ${pen.on.toFixed(2)}）`;
   };
   const palmText = (pen) => (pen.seen && pen.palm
-    ? `伸直 ${pen.palm.straight.toFixed(2)} · ${pen.palm.open ? '<span class="yes">手掌张开</span>' : '不算'}${pen.wave.passes ? ` · 抹了 ${pen.wave.passes} 下` : ''}`
+    ? `伸直 ${pen.palm.straight.toFixed(2)} · ${pen.palm.open ? '<span class="yes">手掌张开</span>' : '不算'}${pen.palmOn ? ` · 正在擦淡（半径 ${Math.round(pen.palmZone.r)} 像素）` : ''}`
     : '—');
   const rows = [
     ['帧率', `${stats.fps} 帧/秒`],
@@ -2847,7 +2840,7 @@ function renderDebug(now = performance.now()) {
     ['手 2', handText(pens[1])],
     ['手 1 手掌', palmText(pens[0])],
     ['手 2 手掌', palmText(pens[1])],
-    ['清雾手势', `伸直大于 0.85 算手掌张开，左右来回抹：每下（横着走 ${Math.round(waveStep())} 像素以上）整面淡一层，${WAVE_PASSES} 下全清掉`],
+    ['手掌擦雾', `伸直大于 0.85 算手掌张开，张开 0.3 秒后手掌下面的雾慢慢变淡，一处 ${SETTINGS.palmSeconds.toFixed(1)} 秒擦干净`],
     ['辅助书写', assistOn ? `开（绳长 ${Math.round(ropeLength())} 像素）` : '关'],
     ['捏合校准', `右手${mapInfo(pinchMaps.right)} · 左手${mapInfo(pinchMaps.left)}`],
     ['水珠', dropsOn ? `${water.drops.length} 颗 · 正在往下流 ${water.drips.length} 道` : '关着'],
