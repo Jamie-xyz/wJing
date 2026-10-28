@@ -695,7 +695,7 @@ function hintText() {
   else if (faceStatus === 'failed') parts.push('哈气识别没加载成功（检查一下网络），先按空格起雾');
   else parts.push('哈气识别加载中…（先按空格起雾）');
   if (handStatus === 'ready') {
-    parts.push(drawMode === 'point' ? '竖起食指擦雾（伸出中指就停）' : '捏住拇指和食指擦雾', '手掌张开左右来回抹 3 下（或按 X）：清掉所有雾');
+    parts.push(drawMode === 'point' ? '竖起食指擦雾（伸出中指就停）' : '捏住拇指和食指擦雾', '手掌张开左右来回抹：雾越抹越淡，抹 6 下全清掉（按 X 一下清掉）');
   }
   else if (handStatus === 'failed') parts.push('手势识别没加载成功（检查一下网络），先用鼠标擦');
   else parts.push('手势识别加载中…先用鼠标擦');
@@ -999,7 +999,7 @@ function resizeFog() {
     }
   }
   inverted = null; // 反转记下的字是按旧的格子存的，大小变了就不能用了
-  invertAnim = null;
+  fogAnim = null;
   const lumpy = new Float32Array(w * h);
   for (let j = 0; j < h; j++) {
     for (let i = 0; i < w; i++) {
@@ -1017,7 +1017,7 @@ let refogLeft = 0; // 按空格后，还要继续起雾多少秒
 let clearLeft = 0; // 「清除所有雾」之后，还要继续散多少秒
 const CLEAR_SECONDS = 0.6; // 清除所有雾：整面雾在这么多秒里很快淡掉（一下子没了看起来太突然）
 
-// 清除所有雾：小气泡里的按钮、X 键，或者手掌左右来回抹 3 下（见 updatePalm）
+// 清除所有雾：小气泡里的按钮、X 键，或者手掌左右来回抹满 6 下（见 updatePalm）
 function clearAllFog() {
   refogLeft = 0; // 正在起雾的话也停下来
   clearLeft = CLEAR_SECONDS;
@@ -1025,7 +1025,7 @@ function clearAllFog() {
   clearWater();
   fog.ink.fill(0); // 写过的字也不算了
   inverted = null;
-  invertAnim = null;
+  fogAnim = null;
   flashHint('雾都清掉了 · 脸靠近镜头哈气，就能重新起雾');
 }
 
@@ -1034,7 +1034,7 @@ function clearAllFog() {
 // 本来就没雾的地方、被雾重新盖住的旧字，都不会变成字。字的边缘和擦痕一样柔和
 const INVERT_SECONDS = 0.6; // 慢慢变过去，不会一下子跳
 let inverted = null;   // 反转着的时候：那些「雾做的字」（每格的浓度），再按一次就换回「雾里擦出来的字」
-let invertAnim = null; // 正在慢慢变：{ from, to, t }
+let fogAnim = null;    // 雾正在慢慢变成另一个样子（反转、来回抹变淡）：{ from, to, t, seconds }
 function toggleInvert() {
   if (!fog.w) return;
   const { density, ink } = fog;
@@ -1063,7 +1063,29 @@ function toggleInvert() {
   clearWater(); // 水珠是贴着原来的擦痕长的，反转以后就不对了
   refogLeft = 0;
   clearLeft = 0;
-  invertAnim = { from: density.slice(), to, t: 0 };
+  fogAnim = { from: density.slice(), to, t: 0, seconds: INVERT_SECONDS };
+}
+
+// ---------- 手掌来回抹：每抹一下整面雾淡一层，抹满 WAVE_PASSES 下全清掉（见 updatePalm） ----------
+// 用户的想法：「不止抹 3 下，多几下才会全部清掉，前几下是慢慢浅一点」。
+// 「淡一层」按看起来的雾算：着色器里雾盖住画面的程度大约是 smoothstep(0, 0.6, 浓度 × k)，
+// 0.6 以上看起来都是满的，所以直接把浓度减一点，前几下会看不出变化。
+// 这里先算出每格「看起来有多少雾」，拿掉 fraction 那么多，再倒算回浓度；水珠也按同样的比例少掉一些
+function thinFog(fraction) {
+  const k = Math.min(1, 0.3 + 1.2 * SETTINGS.fogDensity); // 和着色器里一样
+  const { density } = fog;
+  const to = new Float32Array(density.length);
+  for (let i = 0; i < density.length; i++) {
+    const v = smoothstep(0, 0.6, density[i] * k) * (1 - fraction); // 看起来的雾，拿掉一部分
+    const t = 0.5 - Math.sin(Math.asin(1 - 2 * v) / 3);           // 把 smoothstep 倒过来算
+    to[i] = Math.min(density[i], (0.6 * t) / k);
+  }
+  water.drops = water.drops.filter(() => Math.random() > fraction);
+  water.drips = water.drips.filter(() => Math.random() > fraction);
+  water.dirty = true;
+  refogLeft = 0;
+  clearLeft = 0;
+  fogAnim = { from: density.slice(), to, t: 0, seconds: 0.35 };
 }
 
 // 起雾要多久：浓度越低，雾越薄，起得越快（浓度 60% 时正好是 refogSeconds，0% 时是它的 0.4 倍，大约 1.2 秒）
@@ -1073,16 +1095,16 @@ function refogTime() {
 
 // 每一帧：雾慢慢散；正在哈气的话，从嘴边往外长；刚按过空格的话，整面一起长
 function updateFog(dt) {
-  if (invertAnim) { // 反转中：雾慢慢变成反转后的样子；这 0.6 秒里不起雾、也不散雾
-    invertAnim.t += dt;
-    const p = smoothstep(0, INVERT_SECONDS, invertAnim.t);
-    const { from, to } = invertAnim;
+  if (fogAnim) { // 反转、来回抹变淡：雾慢慢变成目标的样子；这一小会儿里不起雾、也不散雾
+    fogAnim.t += dt;
+    const p = smoothstep(0, fogAnim.seconds, fogAnim.t);
+    const { from, to } = fogAnim;
     for (let k = 0; k < from.length; k++) {
       const v = from[k] + (to[k] - from[k]) * p;
       fog.density[k] = v;
       fog.bytes[k] = v * 255;
     }
-    if (invertAnim.t >= INVERT_SECONDS) invertAnim = null;
+    if (fogAnim.t >= fogAnim.seconds) fogAnim = null;
     return;
   }
   const fade = dt / SETTINGS.fadeSeconds;
@@ -1738,14 +1760,15 @@ function updatePen(pen, h, now) {
     }
   }
 
-  // ③ 手掌张开、左右来回抹 3 下：清除所有雾
+  // ③ 手掌张开、左右来回抹：雾越抹越淡，抹满 6 下全清掉
   updatePalm(pen, h, now);
 }
 
-// ---------- 手掌张开、左右来回抹 3 下：清除所有雾（就像擦真的镜子） ----------
+// ---------- 手掌张开、左右来回抹：每抹一下整面雾淡一层，抹满 6 下全清掉（就像擦真的镜子） ----------
 // 张开的手最好认（以前要五指并拢、举着不动：手指挨在一起时反而认不准，用户反馈「识别不太出来」）；
-// 来回抹的动作平时也不会不小心做出来。往一个方向走够一段算「一下」，手掌上的进度圈一下转三分之一
-const WAVE_PASSES = 3; // 要抹几下
+// 来回抹的动作平时也不会不小心做出来。往一个方向走够一段算「一下」，手掌上的进度圈跟着转。
+// 以前抹 3 下一下子清光；用户想要「多几下才会全部清掉，前几下是慢慢浅一点」（见 thinFog）
+const WAVE_PASSES = 6; // 要抹几下才全清掉
 function waveStep() { return Math.max(60, W * 0.12); } // 每一下至少要横着走多远（像素）
 
 function updatePalm(pen, h, now) {
@@ -1757,7 +1780,7 @@ function updatePalm(pen, h, now) {
   w.okAt = now;
   pen.palmPos = h.palmPos;
   const x = h.palmPos.x, step = waveStep();
-  if (!w.active || now - w.movedAt > 1000) { // 刚张开手，或者停了 1 秒没抹：从这里重新数
+  if (!w.active || now - w.movedAt > 3000) { // 刚张开手，或者停了 3 秒没抹：从这里重新数（中间歇一下不算）
     Object.assign(w, { active: true, start: x, peak: x, dir: 0, passes: 0, counted: false, movedAt: now });
     return;
   }
@@ -1783,6 +1806,8 @@ function updatePalm(pen, h, now) {
     if (w.passes >= WAVE_PASSES) {
       resetWave(pen);
       clearAllFog();
+    } else {
+      thinFog(1 / (WAVE_PASSES - w.passes + 1)); // 每一下拿掉「剩下的雾」的 1/剩下几下：每下淡得一样多，最后一下正好清完
     }
   }
 }
@@ -2237,7 +2262,7 @@ function drawPalmRing(dt, now) {
     return;
   }
   const left = WAVE_PASSES - pen.wave.passes;
-  palmLabel.textContent = `再抹 ${left} 下，清掉所有雾`;
+  palmLabel.textContent = `越抹越淡 · 再抹 ${left} 下全清掉`;
   palmBar.style.strokeDashoffset = (PALM_RING * (left / WAVE_PASSES)).toFixed(1);
   if (!palmShown) palmShown = { x: pen.palmPos.x, y: pen.palmPos.y };
   const k = 1 - Math.exp(-dt * 30);
@@ -2822,7 +2847,7 @@ function renderDebug(now = performance.now()) {
     ['手 2', handText(pens[1])],
     ['手 1 手掌', palmText(pens[0])],
     ['手 2 手掌', palmText(pens[1])],
-    ['清雾手势', `伸直大于 0.85 算手掌张开，左右来回抹 ${WAVE_PASSES} 下（每下横着走 ${Math.round(waveStep())} 像素以上）`],
+    ['清雾手势', `伸直大于 0.85 算手掌张开，左右来回抹：每下（横着走 ${Math.round(waveStep())} 像素以上）整面淡一层，${WAVE_PASSES} 下全清掉`],
     ['辅助书写', assistOn ? `开（绳长 ${Math.round(ropeLength())} 像素）` : '关'],
     ['捏合校准', `右手${mapInfo(pinchMaps.right)} · 左手${mapInfo(pinchMaps.left)}`],
     ['水珠', dropsOn ? `${water.drops.length} 颗 · 正在往下流 ${water.drips.length} 道` : '关着'],
