@@ -217,6 +217,34 @@
     transition: background-color 0.2s ease;
   }
   .menu-action:hover { background: rgba(255, 255, 255, 0.12); }
+  /* 小气泡里的开关（辅助书写）：真正的勾选框藏起来，旁边画一个滑动开关 */
+  .switch-row { position: relative; display: flex; align-items: center; justify-content: space-between; gap: 12px; cursor: pointer; }
+  .switch-row small { display: block; margin-top: 2px; font-size: 12px; color: rgba(255, 255, 255, 0.6); }
+  .switch-row input { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
+  .switch {
+    flex: none;
+    position: relative;
+    width: 40px;
+    height: 24px;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.25);
+    transition: background-color 0.2s ease, box-shadow 0.2s ease;
+  }
+  .switch::after {
+    content: '';
+    position: absolute;
+    left: 3px;
+    top: 3px;
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    background: #fff;
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.35);
+    transition: transform 0.2s ease;
+  }
+  .switch-row input:checked + .switch { background: rgba(126, 226, 168, 0.95); }
+  .switch-row input:checked + .switch::after { transform: translateX(16px); }
+  .switch-row input:focus-visible + .switch { box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.35); }
   .slider input {
     --fill: 60%;
     flex: 1;
@@ -266,7 +294,7 @@
   }
   .brush-preview.show { opacity: 1; }
 
-  /* ---------- 手掌五指并拢、举着不动：手掌上转一圈进度，转满就清除所有雾 ---------- */
+  /* ---------- 手掌左右来回抹：手掌上转一圈进度（抹一下转三分之一），转满就清除所有雾 ---------- */
   .palm-ring {
     position: fixed;
     left: 0;
@@ -284,7 +312,13 @@
   .palm-ring svg { display: block; width: 100%; height: 100%; transform: rotate(-90deg); } /* 从正上方开始转 */
   .palm-ring circle { fill: none; stroke-width: 6; }
   .palm-ring .track { stroke: rgba(255, 255, 255, 0.35); }
-  .palm-ring .bar { stroke: rgba(126, 226, 168, 0.95); stroke-linecap: round; stroke-dasharray: 226.2; } /* 226.2 = 圆周长（半径 36） */
+  .palm-ring .bar { /* 226.2 = 圆周长（半径 36）；每抹一下，进度平滑地往前走一段 */
+    stroke: rgba(126, 226, 168, 0.95);
+    stroke-linecap: round;
+    stroke-dasharray: 226.2;
+    stroke-dashoffset: 226.2;
+    transition: stroke-dashoffset 0.25s ease;
+  }
   .palm-ring span {
     position: absolute;
     left: 50%;
@@ -315,6 +349,34 @@
   }
   .pen.show { opacity: 1; }
   .pen.pinch { background-color: rgba(255, 255, 255, 0.9); }
+
+  /* ---------- 辅助书写：指尖（小圆圈）用一根短绳子拉着墨迹（小圆点） ---------- */
+  .ink-dot, .rope {
+    position: fixed;
+    left: 0;
+    top: 0;
+    z-index: 3;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.15s ease;
+    will-change: transform;
+  }
+  .ink-dot.show, .rope.show { opacity: 1; }
+  .ink-dot {
+    width: 10px;
+    height: 10px;
+    margin: -5px 0 0 -5px;
+    border-radius: 50%;
+    background: rgba(255, 255, 255, 0.95);
+    box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.3);
+  }
+  .rope {
+    width: 1px; /* 实际长度用 scaleX 拉出来 */
+    height: 2px;
+    margin-top: -1px;
+    transform-origin: 0 50%;
+    background: rgba(255, 255, 255, 0.85);
+  }
 
   /* ---------- 调试面板（按 D 开关） ---------- */
   .debug {
@@ -380,7 +442,7 @@
     <circle class="track" cx="42" cy="42" r="36"></circle>
     <circle id="palmBar" class="bar" cx="42" cy="42" r="36"></circle>
   </svg>
-  <span>清除所有雾</span>
+  <span id="palmLabel"></span>
 </div>
 
 <div class="bottom">
@@ -397,9 +459,14 @@
         <input id="brush" type="range" min="0" max="100" step="1" value="53">
         <output id="brushValue">53%</output>
       </label>
+      <label class="switch-row">
+        <span>辅助书写<small>线条更平滑：墨迹跟在指尖后面一小段</small></span>
+        <input id="assist" type="checkbox">
+        <span class="switch" aria-hidden="true"></span>
+      </label>
       <div class="menu-actions">
         <button id="calibBtn" class="menu-action" type="button">重新校准手势</button>
-        <button id="clearBtn" class="menu-action" type="button">清除所有雾</button>
+        <button id="clearBtn" class="menu-action" type="button" title="快捷键：X">清除所有雾</button>
       </div>
     </div>
     <button id="menuBtn" class="menu-btn" type="button" aria-label="设置" aria-expanded="false">
@@ -544,7 +611,7 @@ function hintText() {
   if (faceStatus === 'ready') parts.push('脸靠近镜头，张嘴「哈——」起雾');
   else if (faceStatus === 'failed') parts.push('哈气识别没加载成功（检查一下网络），先按空格起雾');
   else parts.push('哈气识别加载中…（先按空格起雾）');
-  if (handStatus === 'ready') parts.push('捏住拇指和食指擦雾', '五指并拢举着不动：清掉所有雾');
+  if (handStatus === 'ready') parts.push('捏住拇指和食指擦雾', '手掌张开左右来回抹 3 下（或按 X）：清掉所有雾');
   else if (handStatus === 'failed') parts.push('手势识别没加载成功（检查一下网络），先用鼠标擦');
   else parts.push('手势识别加载中…先用鼠标擦');
   parts.push('D 调试');
@@ -639,6 +706,19 @@ window.addEventListener('pointerdown', (e) => {
 $('clearBtn').addEventListener('click', (e) => {
   e.currentTarget.blur();
   if (running) clearAllFog();
+});
+
+// ---------- 小气泡里的「辅助书写」开关（存在这个浏览器里） ----------
+// 打开后，捏住写字时墨迹被一根短「绳子」拉着走（见 followInk），线条更平滑
+const assistBox = $('assist');
+let assistOn = false;
+try { assistOn = localStorage.getItem('fogMirror.assist') === '1'; } catch (err) { /* 读不了就用默认：关 */ }
+assistBox.checked = assistOn;
+assistBox.addEventListener('change', () => {
+  assistOn = assistBox.checked;
+  assistBox.blur(); // 免得之后按空格又把它切换一下
+  try { localStorage.setItem('fogMirror.assist', assistOn ? '1' : '0'); } catch (err) { /* 存不了也没关系 */ }
+  flashHint(assistOn ? '辅助书写开了：墨迹跟在指尖后面一小段，写出来的线更平滑' : '辅助书写关了：墨迹贴在指尖上');
 });
 
 // 等摄像头画面真正有了尺寸（有的浏览器 play() 之后还要再等一下）
@@ -782,7 +862,7 @@ let refogLeft = 0; // 按空格后，还要继续起雾多少秒
 let clearLeft = 0; // 「清除所有雾」之后，还要继续散多少秒
 const CLEAR_SECONDS = 0.6; // 清除所有雾：整面雾在这么多秒里很快淡掉（一下子没了看起来太突然）
 
-// 清除所有雾：小气泡里的按钮，或者手掌五指并拢举着不动（见 updatePalm）
+// 清除所有雾：小气泡里的按钮、X 键，或者手掌左右来回抹 3 下（见 updatePalm）
 function clearAllFog() {
   refogLeft = 0; // 正在起雾的话也停下来
   clearLeft = CLEAR_SECONDS;
@@ -900,6 +980,12 @@ window.addEventListener('keydown', (e) => {
   refogLeft = refogTime() / 0.6; // 长得最慢的地方（0.6 倍速）也能长满
 });
 
+// X：清除所有雾（和小气泡里的按钮一样）。按着 Command / Ctrl 的时候不算（那是剪切）
+window.addEventListener('keydown', (e) => {
+  if (e.code !== 'KeyX' || e.repeat || !running || e.metaKey || e.ctrlKey || e.altKey) return;
+  clearAllFog();
+});
+
 // =====================================================================
 //  4. 手势擦雾：MediaPipe 在画面里找出手上的 21 个点（最多两只手），
 //     拇指和食指的指尖捏在一起，就用两指中间当笔尖去擦
@@ -944,11 +1030,16 @@ let handsFound = [];        // 这一帧认出来的手（调试面板画点用�
 const pens = [makePen(), makePen()];
 
 function makePen() {
-  const el = document.createElement('div'); // 屏幕上的小圆圈
-  el.className = 'pen';
-  document.body.appendChild(el);
+  const make = (className) => { // 屏幕上的小圆圈；辅助书写时还有墨迹小圆点、连着它们的绳子
+    const div = document.createElement('div');
+    div.className = className;
+    document.body.appendChild(div);
+    return div;
+  };
   return {
-    el,
+    el: make('pen'),
+    inkEl: make('ink-dot'),
+    ropeEl: make('rope'),
     seen: false,    // 现在画面里有没有这只手
     lostAt: 0,      // 从什么时候开始看不到它
     ratio: 1,       // 捏得多紧：越小越紧（见 pinchRatio）
@@ -964,12 +1055,11 @@ function makePen() {
     filter: new OneEuroFilter(1.5, 0.02),
     stroke: [],     // 这一笔最近的几个笔尖位置
     pausedAt: 0,    // 手指刚开始张开、先停笔的时间（0 = 没停）
-    palm: null,     // 手掌的样子：{ straight: 手指多直, gap: 指尖分得多开, flat: 算不算五指并拢 }（见 palmShape）
-    palmSince: 0,   // 五指并拢、举着不动是从什么时候开始的（0 = 没在举）
-    palmFrom: null, // 开始举的时候手掌在哪（手动得太远就从头数）
+    palm: null,     // 手掌的样子：{ straight: 四根手指多直, open: 算不算张开的手掌 }（见 palmShape）
     palmPos: null,  // 手掌中间在屏幕上的位置（进度圈画在这）
-    palmOkAt: 0,    // 最后一次看到五指并拢的时间
-    palmDone: false, // 这次举手已经清过雾了（手放下之前不再清）
+    wave: { active: false, passes: 0, okAt: 0 }, // 手掌来回抹了几下（见 updatePalm）
+    ink: null,      // 辅助书写时墨迹在哪：被「绳子」拉着走（见 followInk）
+    inkShown: null, // 墨迹小圆点画在哪（比 ink 再顺滑一点）
   };
 }
 
@@ -1092,7 +1182,7 @@ function updatePen(pen, h, now) {
   if (guide) {
     guideFeed(pen);
     pen.votes = 0;
-    pen.palmSince = 0;
+    resetWave(pen);
     return;
   }
 
@@ -1101,7 +1191,8 @@ function updatePen(pen, h, now) {
   const want = pen.pinched ? h.ratio <= pen.on + 0.06 : h.ratio < pen.on;
   pen.votes = want === pen.pinched ? 0 : pen.votes + 1;
 
-  // ② 擦
+  // ② 擦（开着辅助书写的话，擦的是被「绳子」拉着的墨迹位置，见 followInk）
+  if (assistOn && pen.pinched && !pen.pausedAt) followInk(pen);
   if (pen.votes >= 2) {
     pen.votes = 0;
     pen.pinched = want;
@@ -1114,6 +1205,7 @@ function updatePen(pen, h, now) {
     if (h.ratio > pen.on) {
       if (!pen.pausedAt) { // 刚开始张开：把这一刻的位置画上（正好停在张开的地方），然后停笔
         pen.pausedAt = now;
+        if (assistOn) pen.ink = { x: pen.pos.x, y: pen.pos.y }; // 辅助书写：墨迹直接连到指尖，这一笔停在手指停下的地方
         strokeAdd(pen);
       }
     } else {
@@ -1126,36 +1218,59 @@ function updatePen(pen, h, now) {
     }
   }
 
-  // ③ 手掌五指并拢、举着不动：转满一圈就清除所有雾
+  // ③ 手掌张开、左右来回抹 3 下：清除所有雾
   updatePalm(pen, h, now);
 }
 
-// ---------- 手掌五指并拢、举着不动 1 秒：清除所有雾 ----------
-// 要举着不动、转满一圈才清：举手准备捏的时候手也常是张开的，一张开就清的话很容易不小心清掉
-const PALM_HOLD = 1000; // 要举多久（毫秒）
+// ---------- 手掌张开、左右来回抹 3 下：清除所有雾（就像擦真的镜子） ----------
+// 张开的手最好认（以前要五指并拢、举着不动：手指挨在一起时反而认不准，用户反馈「识别不太出来」）；
+// 来回抹的动作平时也不会不小心做出来。往一个方向走够一段算「一下」，手掌上的进度圈一下转三分之一
+const WAVE_PASSES = 3; // 要抹几下
+function waveStep() { return Math.max(60, W * 0.12); } // 每一下至少要横着走多远（像素）
+
 function updatePalm(pen, h, now) {
-  if (!h.palm.flat || pen.pinched) {
-    if (now - pen.palmOkAt > 150) { // 偶尔一两帧没认出来不算；超过 0.15 秒才算放下，从头数
-      pen.palmSince = 0;
-      pen.palmDone = false;
-    }
+  const w = pen.wave;
+  if (!h.palm.open || pen.pinched || h.ratio < 0.5) { // 不是张开的手掌（或者正捏着、快要捏上）
+    if (now - w.okAt > 250) resetWave(pen); // 抹得快时偶尔几帧认不准，不算断
     return;
   }
-  pen.palmOkAt = now;
+  w.okAt = now;
   pen.palmPos = h.palmPos;
-  const moved = pen.palmSince && Math.hypot(h.palmPos.x - pen.palmFrom.x, h.palmPos.y - pen.palmFrom.y) > 0.08 * Math.min(W, H);
-  if (!pen.palmSince || moved) { // 刚举起来，或者手动了：从头数
-    pen.palmSince = now;
-    pen.palmFrom = h.palmPos;
+  const x = h.palmPos.x, step = waveStep();
+  if (!w.active || now - w.movedAt > 1000) { // 刚张开手，或者停了 1 秒没抹：从这里重新数
+    Object.assign(w, { active: true, start: x, peak: x, dir: 0, passes: 0, counted: false, movedAt: now });
+    return;
   }
-  if (!pen.palmDone && now - pen.palmSince >= PALM_HOLD) {
-    pen.palmDone = true; // 清过了：手放下或者换个姿势之前，不再清第二次
-    clearAllFog();
+  if (w.dir === 0) { // 还不知道往哪边抹
+    if (Math.abs(x - w.start) > step * 0.25) {
+      w.dir = Math.sign(x - w.start);
+      w.peak = x;
+      w.movedAt = now;
+    }
+  } else if ((x - w.peak) * w.dir > 0) { // 还在往同一边走
+    if ((x - w.peak) * w.dir > 5) w.movedAt = now;
+    w.peak = x;
+  } else if ((w.peak - x) * w.dir > Math.max(20, step * 0.25)) { // 掉头了：从刚才最远的地方开始算下一下
+    w.dir = -w.dir;
+    w.start = w.peak;
+    w.peak = x;
+    w.counted = false;
+    w.movedAt = now;
+  }
+  if (w.dir !== 0 && !w.counted && (w.peak - w.start) * w.dir >= step) { // 这一下走够远了
+    w.counted = true;
+    w.passes++;
+    if (w.passes >= WAVE_PASSES) {
+      resetWave(pen);
+      clearAllFog();
+    }
   }
 }
 
-// 手掌是不是「五指并拢」地张开着：四根手指都伸直（指根到指尖的直线距离，和三节加起来差不多长），
-// 而且相邻的指尖挨得近（指尖之间的距离 ÷ 手掌宽，都小于 0.42）。大拇指不管它
+function resetWave(pen) { pen.wave = { active: false, passes: 0, okAt: pen.wave.okAt }; }
+
+// 手掌是不是张开的：食指到小指四根手指都伸直（指根到指尖的直线距离，和三节加起来差不多长）。
+// 手指并拢、分开都行，大拇指不管它
 function palmShape(world, lm) {
   const P = world || lm.map((p) => ({ x: p.x * video.videoWidth, y: p.y * video.videoHeight, z: 0 }));
   const dist = (a, b) => Math.hypot(P[a].x - P[b].x, P[a].y - P[b].y, P[a].z - P[b].z);
@@ -1163,9 +1278,28 @@ function palmShape(world, lm) {
   for (const f of [5, 9, 13, 17]) { // 食指、中指、无名指、小指的指根；往上三个点就是这根手指
     straight = Math.min(straight, dist(f, f + 3) / Math.max(1e-6, dist(f, f + 1) + dist(f + 1, f + 2) + dist(f + 2, f + 3)));
   }
-  const gap = Math.max(dist(8, 12), dist(12, 16), dist(16, 20)) / Math.max(1e-6, dist(5, 17)); // 5 到 17 = 手掌宽
-  return { straight, gap, flat: straight > 0.9 && gap < 0.42 };
+  return { straight, open: straight > 0.85 };
 }
+
+// ---------- 辅助书写（防抖绳）：墨迹跟在指尖后面一小段，像用一根短绳子拉着笔 ----------
+// 指尖在绳子长度以内的抖动（手抖、识别抖）都被吸收掉，墨迹只在绳子拉直时才被拉着走，所以线条平滑；
+// 手停住时墨迹慢慢追上指尖（拐弯、停顿的地方不会被「抄近路」切掉）；手指一张开就直接连到指尖（见 updatePen）
+function ropeLength() { return clamp(Math.min(W, H) * 0.03, 16, 40); }
+
+function followInk(pen) {
+  if (!pen.ink) pen.ink = { x: pen.pos.x, y: pen.pos.y };
+  const dx = pen.pos.x - pen.ink.x, dy = pen.pos.y - pen.ink.y;
+  const d = Math.hypot(dx, dy), rope = ropeLength();
+  const v = pen.filter.v; // 指尖的速度（像素/秒，防抖滤波里算好的）
+  // 先看手停没停：防抖滤波停下时会一点点往前挪，要是先判断「绳子拉直」，就永远轮不到追上
+  if (d > 0.5 && v && Math.hypot(v.x, v.y) < Math.min(W, H) * 0.05) { // 手差不多停住了：墨迹慢慢追上指尖
+    pen.ink = { x: pen.ink.x + dx * 0.25, y: pen.ink.y + dy * 0.25 };
+  } else if (d > rope) { // 绳子拉直了：墨迹被拉着走，始终离指尖一根绳子那么远
+    pen.ink = { x: pen.ink.x + dx * (d - rope) / d, y: pen.ink.y + dy * (d - rope) / d };
+  }
+}
+
+function inkOf(pen) { return assistOn && pen.ink ? pen.ink : pen.pos; } // 现在往哪里擦
 
 // ---------- 捏合校准：屏幕上依次出现 9 个圆圈，把手移进去捏紧，记下每处捏紧时的数值 ----------
 // 手伸到身体另一边、往下伸时，摄像头是斜着看手的，捏紧时的数值会变大（越靠边越大）；手在自己这一边时又很小。
@@ -1427,10 +1561,7 @@ function penMissing(pen, now) {
     pen.lostAt = now;
   }
   pen.votes = 0;
-  if (now - pen.palmOkAt > 150) { // 手不见了：举着的手掌也不算了
-    pen.palmSince = 0;
-    pen.palmDone = false;
-  }
+  if (now - pen.wave.okAt > 300) resetWave(pen); // 手不见了一会儿：来回抹的从头数
   // 短暂看不到（比如手动得太快、画面糊了）先不松开；超过 0.25 秒才算松手
   if (pen.pinched && now - pen.lostAt > 250) {
     pen.pinched = false;
@@ -1458,14 +1589,16 @@ function pinchRatio(world, lm) {
 
 // ---------- 手势笔画：把一个个笔尖位置连成平滑的曲线去擦 ----------
 function strokeStart(pen) {
-  pen.stroke = [pen.pos];
-  wipe(pen.pos.x, pen.pos.y, pen.pos.x, pen.pos.y);
+  pen.ink = { x: pen.pos.x, y: pen.pos.y }; // 辅助书写的墨迹也从指尖开始
+  const p = inkOf(pen);
+  pen.stroke = [p];
+  wipe(p.x, p.y, p.x, p.y);
 }
 
 // 每来一个新位置，就把「上上个 → 上个」这一段补上。
 // 画曲线要知道前后的点，所以擦痕比笔尖晚一帧（大约 0.03 秒，看不出来）
 function strokeAdd(pen) {
-  const pts = pen.stroke, p = pen.pos;
+  const pts = pen.stroke, p = inkOf(pen);
   const last = pts[pts.length - 1];
   if (Math.hypot(p.x - last.x, p.y - last.y) < 1) return; // 几乎没动
   pts.push(p);
@@ -1510,39 +1643,58 @@ function catmullRom(p0, p1, p2, p3, u) {
 
 // 每一帧：把每只手的小圆圈挪到它的笔尖
 function drawPens(dt, now) {
+  const k = 1 - Math.exp(-dt * 30); // 每帧往笔尖靠近一点：比一秒 30 次的识别结果看起来更顺
   for (const pen of pens) {
-    const visible = handStatus === 'ready' && pen.pos && (pen.seen || now - pen.lostAt < 300) && !palmHolding(pen, now);
+    const visible = handStatus === 'ready' && pen.pos && (pen.seen || now - pen.lostAt < 300) && !waving(pen, now);
     pen.el.classList.toggle('show', Boolean(visible));
     pen.el.classList.toggle('pinch', pen.pinched && !pen.pausedAt); // 手指刚张开、先停笔时就变空心，和擦痕一起停
+    // 辅助书写、正在写：墨迹小圆点 + 连着指尖的绳子
+    const roped = Boolean(visible && assistOn && pen.pinched && !pen.pausedAt && pen.ink);
+    pen.inkEl.classList.toggle('show', roped);
+    pen.ropeEl.classList.toggle('show', roped);
     if (!visible) {
       pen.shown = null; // 下次出现时直接跳过去，不从老地方滑过来
+      pen.inkShown = null;
       continue;
     }
     if (!pen.shown) pen.shown = { x: pen.pos.x, y: pen.pos.y };
-    const k = 1 - Math.exp(-dt * 30); // 每帧往笔尖靠近一点：比一秒 30 次的识别结果看起来更顺
     pen.shown.x += (pen.pos.x - pen.shown.x) * k;
     pen.shown.y += (pen.pos.y - pen.shown.y) * k;
     pen.el.style.transform = `translate(${pen.shown.x.toFixed(1)}px, ${pen.shown.y.toFixed(1)}px)`;
+    if (!roped) {
+      pen.inkShown = null;
+      continue;
+    }
+    if (!pen.inkShown) pen.inkShown = { x: pen.ink.x, y: pen.ink.y };
+    pen.inkShown.x += (pen.ink.x - pen.inkShown.x) * k;
+    pen.inkShown.y += (pen.ink.y - pen.inkShown.y) * k;
+    const ix = pen.inkShown.x, iy = pen.inkShown.y;
+    const len = Math.hypot(pen.shown.x - ix, pen.shown.y - iy);
+    const angle = Math.atan2(pen.shown.y - iy, pen.shown.x - ix);
+    pen.inkEl.style.transform = `translate(${ix.toFixed(1)}px, ${iy.toFixed(1)}px)`;
+    pen.ropeEl.style.transform = `translate(${ix.toFixed(1)}px, ${iy.toFixed(1)}px) rotate(${angle.toFixed(3)}rad) scaleX(${len.toFixed(1)})`;
   }
 }
 
-// 手掌五指并拢举着的时候：手掌上转一圈进度（转满就清除所有雾），这时那只手的小圆圈先藏起来
+// 手掌来回抹的时候：手掌上转一圈进度（抹一下转三分之一，抹满就清除所有雾），这时那只手的小圆圈先藏起来
 const palmRing = $('palmRing');
 const palmBar = $('palmBar');
+const palmLabel = $('palmLabel');
 const PALM_RING = 226.2; // 进度圈的周长（SVG 里半径 36）
 let palmShown = null;    // 进度圈画在哪（比识别结果再顺滑一点）
-function palmHolding(pen, now) { // 刚举起来的 0.2 秒先不显示，免得手掌一晃而过也闪一下
-  return Boolean(!guide && pen.palmSince && !pen.palmDone && now - pen.palmSince > 200 && now - pen.palmOkAt < 150);
+function waving(pen, now) { // 抹了至少一下才显示（手掌只是张开着的时候不显示）
+  return Boolean(!guide && pen.wave.active && pen.wave.passes > 0 && now - pen.wave.okAt < 250);
 }
 function drawPalmRing(dt, now) {
-  const pen = pens.find((p) => palmHolding(p, now));
+  const pen = pens.find((p) => waving(p, now));
   palmRing.classList.toggle('show', Boolean(pen));
   if (!pen) {
     palmShown = null;
     return;
   }
-  const progress = clamp((now - pen.palmSince) / PALM_HOLD, 0, 1);
-  palmBar.style.strokeDashoffset = (PALM_RING * (1 - progress)).toFixed(1);
+  const left = WAVE_PASSES - pen.wave.passes;
+  palmLabel.textContent = `再抹 ${left} 下，清掉所有雾`;
+  palmBar.style.strokeDashoffset = (PALM_RING * (left / WAVE_PASSES)).toFixed(1);
   if (!palmShown) palmShown = { x: pen.palmPos.x, y: pen.palmPos.y };
   const k = 1 - Math.exp(-dt * 30);
   palmShown.x += (pen.palmPos.x - palmShown.x) * k;
@@ -2098,7 +2250,7 @@ function renderDebug(now = performance.now()) {
     ? `${handName(pen.hand)} ${pen.ratio.toFixed(2)} · ${pen.pinched ? '<span class="yes">捏住</span>' : '没捏'}（门槛 ${pen.on.toFixed(2)}）`
     : '—');
   const palmText = (pen) => (pen.seen && pen.palm
-    ? `伸直 ${pen.palm.straight.toFixed(2)} · 指缝 ${pen.palm.gap.toFixed(2)} · ${pen.palm.flat ? '<span class="yes">五指并拢</span>' : '不算'}`
+    ? `伸直 ${pen.palm.straight.toFixed(2)} · ${pen.palm.open ? '<span class="yes">手掌张开</span>' : '不算'}${pen.wave.passes ? ` · 抹了 ${pen.wave.passes} 下` : ''}`
     : '—');
   const rows = [
     ['帧率', `${stats.fps} 帧/秒`],
@@ -2113,9 +2265,10 @@ function renderDebug(now = performance.now()) {
     ['手 2 捏合', handText(pens[1])],
     ['手 1 手掌', palmText(pens[0])],
     ['手 2 手掌', palmText(pens[1])],
-    ['清雾手势', '伸直大于 0.90、指缝小于 0.42 算五指并拢，举着不动 1 秒'],
+    ['清雾手势', `伸直大于 0.85 算手掌张开，左右来回抹 ${WAVE_PASSES} 下（每下横着走 ${Math.round(waveStep())} 像素以上）`],
+    ['辅助书写', assistOn ? `开（绳长 ${Math.round(ropeLength())} 像素）` : '关'],
     ['捏合校准', `右手${mapInfo(pinchMaps.right)} · 左手${mapInfo(pinchMaps.left)}`],
-    ['快捷键', '空格 整面起雾（测试用）· C 重新校准 · Esc 跳过 · Shift+C 按两次清除校准'],
+    ['快捷键', 'X 清除所有雾 · 空格 整面起雾（测试用）· C 重新校准 · Esc 跳过 · Shift+C 按两次清除校准'],
   ];
   debugRows.innerHTML = rows.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('');
 }
