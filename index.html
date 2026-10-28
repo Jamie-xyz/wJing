@@ -11,8 +11,6 @@
     --ink-faint: rgba(244, 246, 248, 0.5);
     --card: rgba(22, 26, 31, 0.5);
     --line: rgba(255, 255, 255, 0.14);
-    /* 开始页背景上的细颗粒（一小张噪点图，铺满） */
-    --grain: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='180' height='180'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 0.1 0'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>");
   }
   * { box-sizing: border-box; }
   html, body {
@@ -32,15 +30,15 @@
      不能用 display:none 完全藏起来，否则有的浏览器会停止更新画面。 */
   #cam { position: fixed; left: 0; top: 0; width: 2px; height: 2px; opacity: 0.01; pointer-events: none; }
 
-  /* ---------- 开始页、出错页 ---------- */
+  /* ---------- 开始页、出错页（永远在最上面） ---------- */
   .screen {
     position: fixed;
     inset: 0;
+    z-index: 10;
     display: flex;
     padding: 24px 16px;
     overflow-y: auto;
     background:
-      var(--grain),
       radial-gradient(70vmax 55vmax at 28% 22%, rgba(255, 255, 255, 0.14), transparent 70%),
       radial-gradient(60vmax 50vmax at 78% 82%, rgba(160, 182, 204, 0.16), transparent 70%),
       linear-gradient(160deg, #2c3239, #121519);
@@ -106,13 +104,22 @@
   .actions { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 26px; }
   .actions .btn { padding: 12px 28px; font-size: 16px; letter-spacing: 0.06em; }
 
-  /* ---------- 底部的小提示 ---------- */
-  .hint {
+  /* ---------- 屏幕底部中间：小提示 + 小圆圈（竖着排，提示在上） ---------- */
+  .bottom {
     position: fixed;
     left: 50%;
-    bottom: max(20px, env(safe-area-inset-bottom));
+    bottom: max(18px, env(safe-area-inset-bottom));
     transform: translateX(-50%);
-    max-width: calc(100% - 32px);
+    z-index: 4;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
+    width: min(760px, calc(100% - 32px));
+    pointer-events: none; /* 空白的地方不挡鼠标擦雾 */
+  }
+  .hint {
+    max-width: 100%;
     padding: 9px 18px;
     border-radius: 999px;
     font-size: 14px;
@@ -121,26 +128,310 @@
     background: rgba(10, 12, 15, 0.42);
     backdrop-filter: blur(8px);
     -webkit-backdrop-filter: blur(8px);
-    pointer-events: none;
     transition: opacity 0.8s ease;
   }
   .hint.hidden { opacity: 0; }
   .hint.dim { opacity: 0.5; }
+
+  /* ---------- 底部中间的小圆圈：点一下弹出小气泡（雾的浓度、擦痕粗细、重新校准、清除所有雾），再点一下收起 ---------- */
+  .menu {
+    position: relative;
+    pointer-events: auto;
+    transition: opacity 0.4s ease;
+  }
+  .menu.hidden { opacity: 0; visibility: hidden; pointer-events: none; }
+  .menu-btn {
+    appearance: none;
+    -webkit-appearance: none;
+    display: grid;
+    place-items: center;
+    width: 44px;
+    height: 44px;
+    padding: 0;
+    border: 1px solid rgba(255, 255, 255, 0.28);
+    border-radius: 50%;
+    color: rgba(255, 255, 255, 0.95);
+    background: rgba(10, 12, 15, 0.42);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    cursor: pointer;
+    transition: background-color 0.2s ease, color 0.2s ease;
+  }
+  .menu-btn:hover { background: rgba(10, 12, 15, 0.6); }
+  .menu.open .menu-btn { color: #15181c; background: rgba(255, 255, 255, 0.92); }
+  .menu-panel { /* 小气泡：从圆圈上面弹出来，只占屏幕下面一小块 */
+    position: absolute;
+    left: 50%;
+    bottom: calc(100% + 14px);
+    width: min(320px, calc(100vw - 32px));
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding: 14px 18px 16px;
+    border-radius: 20px;
+    font-size: 14px;
+    color: rgba(255, 255, 255, 0.92);
+    background: rgba(10, 12, 15, 0.6);
+    backdrop-filter: blur(14px);
+    -webkit-backdrop-filter: blur(14px);
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+    opacity: 0;
+    visibility: hidden;
+    transform: translateX(-50%) translateY(10px) scale(0.92);
+    transform-origin: 50% 100%;
+    transition: opacity 0.18s ease, transform 0.18s ease, visibility 0s linear 0.18s;
+  }
+  .menu-panel::after { /* 气泡下面的小尖角，指着圆圈 */
+    content: '';
+    position: absolute;
+    left: 50%;
+    top: 100%;
+    margin-left: -8px;
+    border: 8px solid transparent;
+    border-top-color: rgba(10, 12, 15, 0.6);
+  }
+  .menu.open .menu-panel {
+    opacity: 1;
+    visibility: visible;
+    transform: translateX(-50%);
+    transition: opacity 0.18s ease, transform 0.18s ease;
+  }
+  .bottom.menu-open .hint { opacity: 0; transition-duration: 0.15s; } /* 气泡会盖到提示的位置：打开时先把提示藏起来 */
+  .slider { display: flex; align-items: center; gap: 12px; min-width: 0; cursor: pointer; }
+  .slider span { white-space: nowrap; }
+  .slider output { min-width: 2.8em; text-align: right; font-variant-numeric: tabular-nums; }
+  .menu-actions { display: flex; gap: 10px; margin-top: 4px; }
+  .menu-action {
+    appearance: none;
+    -webkit-appearance: none;
+    flex: 1;
+    padding: 8px 10px;
+    border: 1px solid rgba(255, 255, 255, 0.3);
+    border-radius: 999px;
+    font: inherit;
+    font-size: 13px;
+    white-space: nowrap;
+    color: rgba(255, 255, 255, 0.92);
+    background: transparent;
+    cursor: pointer;
+    transition: background-color 0.2s ease;
+  }
+  .menu-action:hover { background: rgba(255, 255, 255, 0.12); }
+  .slider input {
+    --fill: 60%;
+    flex: 1;
+    min-width: 0;
+    height: 24px;
+    margin: 0;
+    background: transparent;
+    cursor: pointer;
+    -webkit-appearance: none;
+    appearance: none;
+  }
+  .slider input:focus { outline: none; }
+  .slider input::-webkit-slider-runnable-track {
+    height: 4px;
+    border-radius: 2px;
+    background: linear-gradient(to right, #fff var(--fill), rgba(255, 255, 255, 0.28) var(--fill));
+  }
+  .slider input::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 18px;
+    height: 18px;
+    margin-top: -7px;
+    border-radius: 50%;
+    background: #fff;
+    box-shadow: 0 1px 5px rgba(0, 0, 0, 0.35);
+    transition: transform 0.15s ease;
+  }
+  .slider input:active::-webkit-slider-thumb { transform: scale(1.15); }
+  .slider input:focus-visible::-webkit-slider-thumb { box-shadow: 0 0 0 4px rgba(255, 255, 255, 0.3); }
+  .slider input::-moz-range-track { height: 4px; border-radius: 2px; background: rgba(255, 255, 255, 0.28); }
+  .slider input::-moz-range-progress { height: 4px; border-radius: 2px; background: #fff; }
+  .slider input::-moz-range-thumb { width: 18px; height: 18px; border: 0; border-radius: 50%; background: #fff; box-shadow: 0 1px 5px rgba(0, 0, 0, 0.35); }
+
+  /* 调擦痕粗细时，屏幕中间出现一个和擦痕一样粗的圆 */
+  .brush-preview {
+    position: fixed;
+    left: 50%;
+    top: 50%;
+    z-index: 3;
+    border-radius: 50%;
+    transform: translate(-50%, -50%);
+    border: 2px solid rgba(255, 255, 255, 0.9);
+    box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.25), inset 0 0 0 1px rgba(0, 0, 0, 0.15);
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.3s ease;
+  }
+  .brush-preview.show { opacity: 1; }
+
+  /* ---------- 手掌五指并拢、举着不动：手掌上转一圈进度，转满就清除所有雾 ---------- */
+  .palm-ring {
+    position: fixed;
+    left: 0;
+    top: 0;
+    z-index: 3;
+    width: 84px;
+    height: 84px;
+    margin: -42px 0 0 -42px;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.2s ease;
+    will-change: transform;
+  }
+  .palm-ring.show { opacity: 1; }
+  .palm-ring svg { display: block; width: 100%; height: 100%; transform: rotate(-90deg); } /* 从正上方开始转 */
+  .palm-ring circle { fill: none; stroke-width: 6; }
+  .palm-ring .track { stroke: rgba(255, 255, 255, 0.35); }
+  .palm-ring .bar { stroke: rgba(126, 226, 168, 0.95); stroke-linecap: round; stroke-dasharray: 226.2; } /* 226.2 = 圆周长（半径 36） */
+  .palm-ring span {
+    position: absolute;
+    left: 50%;
+    top: calc(100% + 6px);
+    transform: translateX(-50%);
+    font-size: 13px;
+    white-space: nowrap;
+    color: #fff;
+    text-shadow: 0 1px 4px rgba(0, 0, 0, 0.6);
+  }
+
+  /* ---------- 手势的笔尖：没捏时空心，捏住时实心 ---------- */
+  .pen {
+    position: fixed;
+    left: 0;
+    top: 0;
+    z-index: 3;
+    width: 22px;
+    height: 22px;
+    margin: -11px 0 0 -11px;
+    border-radius: 50%;
+    border: 2px solid rgba(255, 255, 255, 0.95);
+    box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.25), 0 2px 8px rgba(0, 0, 0, 0.3);
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.25s ease, background-color 0.12s ease;
+    will-change: transform;
+  }
+  .pen.show { opacity: 1; }
+  .pen.pinch { background-color: rgba(255, 255, 255, 0.9); }
+
+  /* ---------- 调试面板（按 D 开关） ---------- */
+  .debug {
+    position: fixed;
+    left: 16px;
+    top: 16px;
+    z-index: 5;
+    min-width: 240px;
+    padding: 12px 14px;
+    border-radius: 14px;
+    font-size: 13px;
+    line-height: 1.65;
+    color: rgba(255, 255, 255, 0.92);
+    background: rgba(10, 12, 15, 0.62);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    pointer-events: none;
+    font-variant-numeric: tabular-nums;
+  }
+  .debug-head { display: flex; justify-content: space-between; gap: 16px; margin-bottom: 6px; font-weight: 600; }
+  .debug-head span { font-weight: 400; color: rgba(255, 255, 255, 0.5); }
+  .debug dl { display: grid; grid-template-columns: auto 1fr; gap: 1px 16px; margin: 0; }
+  .debug dt { color: rgba(255, 255, 255, 0.6); }
+  .debug dd { margin: 0; text-align: right; }
+  .debug .yes { color: #7ee2a8; font-weight: 600; }
+  .debug-dots { position: fixed; inset: 0; z-index: 2; width: 100%; height: 100%; pointer-events: none; }
+
+  /* ---------- 校准引导：屏幕上方的小卡片（圆圈画在透明画布上） ---------- */
+  .guide {
+    position: fixed;
+    top: 16px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 6;
+    width: min(440px, calc(100% - 32px));
+    padding: 14px 18px;
+    border-radius: 18px;
+    text-align: center;
+    color: #fff;
+    background: rgba(10, 12, 15, 0.62);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    box-shadow: 0 12px 40px rgba(0, 0, 0, 0.3);
+  }
+  .guide.hidden { display: none; }
+  .guide-title { margin-bottom: 4px; font-size: 16px; font-weight: 600; }
+  .guide-text { font-size: 14px; line-height: 1.6; color: rgba(255, 255, 255, 0.85); }
+  .guide-actions { display: flex; justify-content: center; gap: 10px; margin-top: 10px; }
+  .btn.small { padding: 8px 20px; font-size: 14px; letter-spacing: 0.04em; }
+  .debug.hidden, .debug-dots.hidden { display: none; }
 </style>
 </head>
 <body>
 
 <canvas id="view"></canvas>
 <video id="cam" autoplay muted playsinline></video>
+<canvas id="debugDots" class="debug-dots hidden"></canvas>
 
-<div id="hint" class="hint hidden">按住鼠标擦雾 · 按空格重新起雾（测试用）</div>
+<div id="brushPreview" class="brush-preview"></div>
+
+<div id="palmRing" class="palm-ring">
+  <svg viewBox="0 0 84 84" aria-hidden="true">
+    <circle class="track" cx="42" cy="42" r="36"></circle>
+    <circle id="palmBar" class="bar" cx="42" cy="42" r="36"></circle>
+  </svg>
+  <span>清除所有雾</span>
+</div>
+
+<div class="bottom">
+  <div id="hint" class="hint hidden"></div>
+  <div id="menu" class="menu hidden">
+    <div class="menu-panel">
+      <label class="slider">
+        <span>雾的浓度</span>
+        <input id="density" type="range" min="0" max="100" step="1" value="60">
+        <output id="densityValue">60%</output>
+      </label>
+      <label class="slider">
+        <span>擦痕粗细</span>
+        <input id="brush" type="range" min="0" max="100" step="1" value="53">
+        <output id="brushValue">53%</output>
+      </label>
+      <div class="menu-actions">
+        <button id="calibBtn" class="menu-action" type="button">重新校准手势</button>
+        <button id="clearBtn" class="menu-action" type="button">清除所有雾</button>
+      </div>
+    </div>
+    <button id="menuBtn" class="menu-btn" type="button" aria-label="设置" aria-expanded="false">
+      <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true">
+        <path d="M4 8h8M16 8h4M4 16h4M12 16h8"></path>
+        <circle cx="14" cy="8" r="2"></circle>
+        <circle cx="10" cy="16" r="2"></circle>
+      </svg>
+    </button>
+  </div>
+</div>
+
+<div id="debug" class="debug hidden">
+  <div class="debug-head">调试信息<span>按 D 关闭</span></div>
+  <dl id="debugRows"></dl>
+</div>
+
+<div id="guide" class="guide hidden">
+  <div id="guideTitle" class="guide-title"></div>
+  <div id="guideText" class="guide-text"></div>
+  <div class="guide-actions">
+    <button id="guideOther" class="btn small" hidden></button>
+    <button id="guideSkip" class="btn ghost small">跳过</button>
+  </div>
+</div>
 
 <section id="start" class="screen">
   <div class="card">
     <h1>雾镜</h1>
     <p class="lead">对着镜头哈气起雾，捏住拇指和食指擦雾</p>
     <button id="startBtn" class="btn">开始</button>
-    <p class="note">画面只在你的电脑里处理，不会上传<br>测试版：现在先用鼠标擦雾、按空格重新起雾</p>
+    <p class="note">每次开始会先带你校准一下手势（十几秒，可以跳过）<br>画面只在你的电脑里处理，不会上传<br>测试版：哈气起雾还没做好，先按空格起雾</p>
   </div>
 </section>
 
@@ -157,15 +448,15 @@
 
 <script type="module">
 // =====================================================================
-//  雾镜 · 第一阶段：镜子 + 雾 + 鼠标擦雾 + 空格起雾
+//  雾镜 · 做到第二阶段：镜子 + 雾 + 鼠标/捏合手势擦雾 + 空格起雾
 //
 //  画面是怎么来的：
 //    摄像头 → <video>（藏起来）→ 每一帧用 WebGL（让显卡画图）画到 <canvas> 上。
-//    显卡手里有两份画面：「清晰镜像」和「磨砂镜像」（模糊、发白、带颗粒），
+//    显卡手里有两份画面：「清晰镜像」和「起雾的镜像」（模糊、发白，像水蒸气），
 //    再照着「雾浓度表」决定每个位置显示哪一份、各占多少。
 //
 //  雾是怎么存的（最重要的一点）：
-//    fog.density 是一张看不见的表格，每一格管屏幕上 4×4 个像素，
+//    fog.density 是一张看不见的表格，每一格管屏幕上 3×3 个像素，
 //    存一个 0（没雾）到 1（最浓）的数。
 //    起雾 = 往表里加；擦雾 = 从表里减；消散 = 每帧整体减一点点。
 //    雾只存在这张表里，画面每帧照着它重新合成，所以擦掉的地方不会被盖回去。
@@ -175,11 +466,18 @@
 const SETTINGS = {
   brushSize: 0.035,   // 擦痕半径 = 屏幕短边 × 这个比例
   fadeSeconds: 240,   // 最浓的雾放着不管，大约多少秒散完
-  refogSeconds: 4,    // 按空格后，雾大约多少秒长到最浓（看起来盖满要 2～4 秒，各处快慢不一）
+  refogSeconds: 3,    // 浓度 60% 时，按空格后雾大约多少秒长到最浓；浓度越低起得越快（见 refogTime）
+  pinchOn: 0.3,       // 「两指间隙 ÷ 手掌长度」小于它算捏住，捏住后大于它 + 0.06 才算松开（按 D 看数值）。没校准过的手就用它（见 pinchOnFor）
+  pinchMargin: 0.1,   // 校准过的手：画面中间的门槛 = 校准时捏住的数值 + 它（最多到 pinchOn）。越小，手指张开一点就越早停笔
+  fogDensity: 0.6,    // 雾的浓度 0~1：屏幕底部的滑条调的就是它（浏览器会记住）
 };
 
-const CELL = 4;       // 雾浓度表的一格 = 屏幕上 4×4 个像素
+const CELL = 3;       // 雾浓度表的一格 = 屏幕上 3×3 个像素（格子越小，擦痕边缘越细腻）
 const MAX_DPR = 1.5;  // 画布最多按 1.5 倍清晰度画：摄像头本身没那么清楚，画得更细只会更费电
+
+// 手势识别用的 MediaPipe：版本号写死，免得它以后自己升级出问题
+const MP_URL = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@1.1.0';
+const HAND_MODEL = 'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task';
 
 const $ = (id) => document.getElementById(id);
 const canvas = $('view');
@@ -231,9 +529,107 @@ async function start() {
   running = true;
   watchVideoFrames();
   requestAnimationFrame(loop);
-  show(hint);
-  setTimeout(() => hint.classList.add('dim'), 8000);
+  flashHint();
+  show(menuEl);
+  maybeAutoGuide(); // 每次开始都先带着校准一下
 }
+
+// 底部提示：跟着手势识别的状态变
+function hintText() {
+  if (handStatus === 'ready') return '捏住拇指和食指擦雾（鼠标也行）· 手掌五指并拢、举着不动：清掉所有雾 · 空格起雾（测试用）· D 调试';
+  if (handStatus === 'failed') return '手势识别没加载成功（检查一下网络），先用鼠标擦吧 · 空格重新起雾';
+  return '手势识别加载中……先用鼠标擦 · 空格重新起雾';
+}
+
+let hintTimer = 0;
+function flashHint(message) { // 显示（或更新）提示，8 秒后变淡。给了 message 就临时显示它，4 秒后换回平常的提示
+  hint.textContent = message || hintText();
+  show(hint);
+  hint.classList.remove('dim');
+  clearTimeout(hintTimer);
+  hintTimer = message
+    ? setTimeout(() => flashHint(), 4000)
+    : setTimeout(() => hint.classList.add('dim'), 8000);
+}
+
+// ---------- 小气泡里的两个滑条：雾的浓度、擦痕粗细 ----------
+// 调好的值存在这个浏览器里，下次打开还是它
+const brushPreview = $('brushPreview');
+const SLIDERS = [
+  {
+    input: $('density'), output: $('densityValue'), key: 'fogMirror.density',
+    get: () => SETTINGS.fogDensity,
+    set: (v) => { SETTINGS.fogDensity = v; },
+    toValue: (pct) => pct / 100, // 滑条 0~100 → 浓度 0~1
+    toPct: (v) => v * 100,
+  },
+  {
+    input: $('brush'), output: $('brushValue'), key: 'fogMirror.brush',
+    get: () => SETTINGS.brushSize,
+    set: (v) => { SETTINGS.brushSize = v; },
+    toValue: (pct) => 0.012 * Math.pow(7.5, pct / 100), // 滑条 0~100 → 擦痕半径占屏幕短边 0.012~0.09，越往右越粗
+    toPct: (v) => (Math.log(v / 0.012) / Math.log(7.5)) * 100,
+    onChange: showBrushPreview,
+  },
+];
+
+for (const s of SLIDERS) {
+  try {
+    const pct = s.toPct(parseFloat(localStorage.getItem(s.key)));
+    if (Number.isFinite(pct)) s.set(s.toValue(clamp(pct, 0, 100))); // 存的值先限制在滑条的范围里
+  } catch (err) { /* 有的浏览器不让存，就用默认值 */ }
+  showSlider(s);
+  s.input.addEventListener('input', () => {
+    s.set(s.toValue(Number(s.input.value)));
+    showSlider(s);
+    if (s.onChange) s.onChange();
+    try { localStorage.setItem(s.key, String(s.get())); } catch (err) { /* 存不了也没关系 */ }
+  });
+}
+
+function showSlider(s) {
+  const pct = Math.round(clamp(s.toPct(s.get()), 0, 100));
+  s.input.value = pct;
+  s.output.textContent = `${pct}%`;
+  s.input.style.setProperty('--fill', `${pct}%`); // 滑条左边填成白色的那一段
+}
+
+// 调粗细时，屏幕中间出现一个和擦痕一样粗的圆，松手一会儿就消失
+let previewTimer = 0;
+function showBrushPreview() {
+  const d = 2 * brushRadius();
+  brushPreview.style.width = `${d}px`;
+  brushPreview.style.height = `${d}px`;
+  brushPreview.classList.add('show');
+  clearTimeout(previewTimer);
+  previewTimer = setTimeout(() => brushPreview.classList.remove('show'), 900);
+}
+
+// ---------- 底部中间的小圆圈：点一下弹出小气泡，再点一下（或者点外面、按 Esc）收起 ----------
+const menuEl = $('menu');
+const menuBtn = $('menuBtn');
+let menuOpen = false;
+function setMenu(open) {
+  menuOpen = open;
+  menuEl.classList.toggle('open', open);
+  menuEl.parentElement.classList.toggle('menu-open', open); // 气泡会盖到提示的位置：打开时把提示藏起来
+  menuBtn.setAttribute('aria-expanded', String(open));
+  if (!open && menuEl.contains(document.activeElement)) document.activeElement.blur(); // 收起后按方向键不会再去动滑条
+}
+menuBtn.addEventListener('click', (e) => {
+  e.currentTarget.blur(); // 免得之后按空格又「点」了它一下
+  setMenu(!menuOpen);
+});
+// 点气泡外面的地方：收起来。这一下只用来收气泡，不会擦到雾
+window.addEventListener('pointerdown', (e) => {
+  if (!menuOpen || menuEl.contains(e.target)) return;
+  setMenu(false);
+  e.stopPropagation();
+}, true);
+$('clearBtn').addEventListener('click', (e) => {
+  e.currentTarget.blur();
+  if (running) clearAllFog();
+});
 
 // 等摄像头画面真正有了尺寸（有的浏览器 play() 之后还要再等一下）
 function videoHasSize() {
@@ -332,6 +728,8 @@ function showProblem(name) {
   startBtn.disabled = false;
   startBtn.textContent = '开始';
   hide(hint);
+  setMenu(false);
+  hide(menuEl);
   show(problemScreen); // 盖在开始页上面；点「再试一次」时拿掉它，下面就是开始页
 }
 
@@ -343,7 +741,6 @@ const fog = {
   density: new Float32Array(0),     // 每格的雾浓度：0 = 没雾，1 = 最浓
   bytes: new Uint8ClampedArray(0),  // 同一张表的 0~255 版本，交给显卡用
   lumpy: new Float32Array(0),       // 每格一个 0~1 的随机数（大块起伏）：哪里雾长得快、散得快
-  ragged: new Float32Array(0),      // 每格一个 0~1 的随机数（小块起伏）：让擦痕边缘不那么整齐
 };
 
 function resizeFog() {
@@ -358,31 +755,46 @@ function resizeFog() {
       for (let i = 0; i < w; i++)
         density[j * w + i] = old[Math.min(j, oh - 1) * ow + Math.min(i, ow - 1)];
   }
-  const lumpy = new Float32Array(w * h), ragged = new Float32Array(w * h);
+  const lumpy = new Float32Array(w * h);
   for (let j = 0; j < h; j++) {
     for (let i = 0; i < w; i++) {
       const x = (i + 0.5) * CELL, y = (j + 0.5) * CELL; // 这一格在屏幕上的位置
       lumpy[j * w + i] = 0.65 * smoothNoise(x / 190, y / 190) + 0.35 * smoothNoise(x / 70 + 31, y / 70 + 17);
-      ragged[j * w + i] = 0.6 * smoothNoise(x / 9 + 101, y / 9 + 53) + 0.4 * smoothNoise(x / 24 + 7, y / 24 + 91);
     }
   }
-  Object.assign(fog, { w, h, density, lumpy, ragged, bytes: new Uint8ClampedArray(w * h) });
+  Object.assign(fog, { w, h, density, lumpy, bytes: new Uint8ClampedArray(w * h) });
   for (let k = 0; k < density.length; k++) fog.bytes[k] = density[k] * 255;
   gl.bindTexture(gl.TEXTURE_2D, maskTex);
   gl.texImage2D(gl.TEXTURE_2D, 0, gl.LUMINANCE, w, h, 0, gl.LUMINANCE, gl.UNSIGNED_BYTE, fog.bytes);
 }
 
 let refogLeft = 0; // 按空格后，还要继续起雾多少秒
+let clearLeft = 0; // 「清除所有雾」之后，还要继续散多少秒
+const CLEAR_SECONDS = 0.6; // 清除所有雾：整面雾在这么多秒里很快淡掉（一下子没了看起来太突然）
+
+// 清除所有雾：小气泡里的按钮，或者手掌五指并拢举着不动（见 updatePalm）
+function clearAllFog() {
+  refogLeft = 0; // 正在起雾的话也停下来
+  clearLeft = CLEAR_SECONDS;
+  flashHint('雾都清掉了 · 空格重新起雾（测试用）');
+}
+
+// 起雾要多久：浓度越低，雾越薄，起得越快（浓度 60% 时正好是 refogSeconds，0% 时是它的 0.4 倍，大约 1.2 秒）
+function refogTime() {
+  return SETTINGS.refogSeconds * (0.4 + SETTINGS.fogDensity);
+}
 
 // 每一帧：雾慢慢散；如果刚按过空格，就再往上长
 function updateFog(dt) {
   const fade = dt / SETTINGS.fadeSeconds;
-  const grow = refogLeft > 0 ? dt / SETTINGS.refogSeconds : 0;
+  const grow = refogLeft > 0 ? dt / refogTime() : 0;
   refogLeft = Math.max(0, refogLeft - dt);
+  const clear = clearLeft > 0 ? dt / CLEAR_SECONDS : 0; // 清除所有雾：每处一起往下减，CLEAR_SECONDS 秒减完
+  clearLeft = Math.max(0, clearLeft - dt);
   const { density, bytes, lumpy } = fog;
   for (let k = 0; k < density.length; k++) {
     const speed = 0.6 + 0.8 * lumpy[k]; // 0.6~1.4 倍：各处快慢不一，看起来更自然
-    let v = density[k] + (grow - fade) * speed;
+    let v = density[k] + (grow - fade) * speed - clear;
     v = v < 0 ? 0 : v > 1 ? 1 : v;
     density[k] = v;
     bytes[k] = v * 255;
@@ -390,7 +802,7 @@ function updateFog(dt) {
 }
 
 // =====================================================================
-//  3. 擦雾（现在用鼠标，第二阶段加上手势）
+//  3. 擦雾（鼠标和手势都用这里的 wipe）
 // =====================================================================
 function brushRadius() { return Math.max(14, Math.min(W, H) * SETTINGS.brushSize); }
 
@@ -398,12 +810,12 @@ function brushRadius() { return Math.max(14, Math.min(W, H) * SETTINGS.brushSize
 // 所以移动得再快，痕迹也是连着的，不会断成一个个点。
 function wipe(x0, y0, x1, y1) {
   const r = brushRadius();
-  const soft = r * 0.4; // 边缘这么宽的一圈慢慢过渡，不是一刀切
-  const { w, h, density, ragged } = fog;
-  const i0 = Math.max(0, Math.floor((Math.min(x0, x1) - r * 1.1) / CELL));
-  const i1 = Math.min(w - 1, Math.floor((Math.max(x0, x1) + r * 1.1) / CELL));
-  const j0 = Math.max(0, Math.floor((Math.min(y0, y1) - r * 1.1) / CELL));
-  const j1 = Math.min(h - 1, Math.floor((Math.max(y0, y1) + r * 1.1) / CELL));
+  const soft = r * 0.5; // 外面这一半慢慢过渡，边缘柔和顺滑，不是一刀切
+  const { w, h, density } = fog;
+  const i0 = Math.max(0, Math.floor((Math.min(x0, x1) - r) / CELL));
+  const i1 = Math.min(w - 1, Math.floor((Math.max(x0, x1) + r) / CELL));
+  const j0 = Math.max(0, Math.floor((Math.min(y0, y1) - r) / CELL));
+  const j1 = Math.min(h - 1, Math.floor((Math.max(y0, y1) + r) / CELL));
   const dx = x1 - x0, dy = y1 - y0;
   const len2 = dx * dx + dy * dy;
   for (let j = j0; j <= j1; j++) {
@@ -415,11 +827,10 @@ function wipe(x0, y0, x1, y1) {
       t = t < 0 ? 0 : t > 1 ? 1 : t;
       const ex = x0 + dx * t - px, ey = y0 + dy * t - py;
       const dist = Math.sqrt(ex * ex + ey * ey);
+      if (dist >= r) continue;
       const k = j * w + i;
-      const edge = r * (0.92 + 0.16 * ragged[k]); // 每个地方的边缘远近略有不同，像手指擦出来的
-      if (dist >= edge) continue;
-      // keep：这一格最多还能剩多少雾（中心是 0 = 擦干净，往外慢慢回到 1）
-      const keep = smoothstep(edge - soft, edge, dist);
+      // keep：这一格最多还能剩多少雾（中心是 0 = 擦干净，往外顺滑地回到 1）
+      const keep = smootherstep(r - soft, r, dist);
       if (keep < density[k]) density[k] = keep; // 只会变少不会变多；同一个地方擦几遍效果一样
     }
   }
@@ -452,11 +863,675 @@ canvas.addEventListener('pointercancel', stopWiping);
 window.addEventListener('keydown', (e) => {
   if (e.code !== 'Space' || !running) return;
   e.preventDefault();
-  refogLeft = SETTINGS.refogSeconds / 0.6; // 长得最慢的地方（0.6 倍速）也能长满
+  clearLeft = 0; // 刚点过「清除所有雾」也不影响
+  refogLeft = refogTime() / 0.6; // 长得最慢的地方（0.6 倍速）也能长满
 });
 
 // =====================================================================
-//  4. WebGL：把「清晰镜像」和「磨砂镜像」按雾的浓度混在一起
+//  4. 手势擦雾：MediaPipe 在画面里找出手上的 21 个点（最多两只手），
+//     拇指和食指的指尖捏在一起，就用两指中间当笔尖去擦
+// =====================================================================
+
+// 防抖滤波（One Euro Filter）：手慢的时候多平滑一点（不抖），手快的时候少平滑一点（跟得上）
+class OneEuroFilter {
+  constructor(minCutoff, beta) {
+    this.minCutoff = minCutoff; // 手不动时的平滑程度：越小越稳，但也越「拖」
+    this.beta = beta;           // 手越快，平滑得越少
+    this.reset();
+  }
+  reset() { this.p = null; }
+  filter(x, y, t) { // t：秒
+    if (!this.p) {
+      this.p = { x, y };
+      this.v = { x: 0, y: 0 };
+      this.t = t;
+      return { x, y };
+    }
+    const dt = Math.max(0.001, t - this.t);
+    this.t = t;
+    const alpha = (cutoff) => 1 / (1 + 1 / (2 * Math.PI * cutoff * dt));
+    const av = alpha(1); // 速度本身也平滑一下
+    this.v.x += av * ((x - this.p.x) / dt - this.v.x);
+    this.v.y += av * ((y - this.p.y) / dt - this.v.y);
+    const a = alpha(this.minCutoff + this.beta * Math.hypot(this.v.x, this.v.y));
+    this.p.x += a * (x - this.p.x);
+    this.p.y += a * (y - this.p.y);
+    return { x: this.p.x, y: this.p.y };
+  }
+}
+
+let handLandmarker = null;  // 认手的程序；还没下载好时是 null
+let handStatus = 'loading'; // loading = 下载中，ready = 能用了，failed = 失败了
+let handFresh = false;      // 摄像头有没有还没认过的新画面
+let lastHandTime = 0;       // 上一次识别用的时间戳（MediaPipe 要求它一直变大）
+let visionLib = null;       // MediaPipe 的程序库（只下载一次，第三阶段认脸也用它）
+let handsFound = [];        // 这一帧认出来的手（调试面板画点用）
+
+// 每只手一支「笔」，两只手可以同时擦
+const pens = [makePen(), makePen()];
+
+function makePen() {
+  const el = document.createElement('div'); // 屏幕上的小圆圈
+  el.className = 'pen';
+  document.body.appendChild(el);
+  return {
+    el,
+    seen: false,    // 现在画面里有没有这只手
+    lostAt: 0,      // 从什么时候开始看不到它
+    ratio: 1,       // 捏得多紧：越小越紧（见 pinchRatio）
+    pinched: false, // 现在算不算捏住
+    votes: 0,       // 连续几帧「想换状态」：连续 2 帧才真的换，偶尔看错一帧不算
+    at: null,       // 这只手在屏幕上的位置（用来分辨哪只手是哪只）
+    cam: null,      // 这只手在镜子画面里的位置，0~1（校准表按它来查）
+    hand: 'right',  // 是左手还是右手（刚出现时投票决定，见 updatePen）
+    tally: { left: 0, right: 0 },
+    on: SETTINGS.pinchOn, // 这只手在现在这个位置的「捏住」门槛（见 pinchOnFor）
+    pos: null,      // 笔尖在屏幕上的位置（防抖过的）
+    shown: null,    // 小圆圈画在哪（比 pos 再顺滑一点）
+    filter: new OneEuroFilter(1.5, 0.02),
+    stroke: [],     // 这一笔最近的几个笔尖位置
+    pausedAt: 0,    // 手指刚开始张开、先停笔的时间（0 = 没停）
+    palm: null,     // 手掌的样子：{ straight: 手指多直, gap: 指尖分得多开, flat: 算不算五指并拢 }（见 palmShape）
+    palmSince: 0,   // 五指并拢、举着不动是从什么时候开始的（0 = 没在举）
+    palmFrom: null, // 开始举的时候手掌在哪（手动得太远就从头数）
+    palmPos: null,  // 手掌中间在屏幕上的位置（进度圈画在这）
+    palmOkAt: 0,    // 最后一次看到五指并拢的时间
+    palmDone: false, // 这次举手已经清过雾了（手放下之前不再清）
+  };
+}
+
+loadHands(); // 页面一打开就在后台下载（大约 8 MB），不用等点「开始」
+
+function loadVision() {
+  if (!visionLib) {
+    visionLib = (async () => {
+      const lib = await import(`${MP_URL}/vision_bundle.mjs`);
+      const fileset = await lib.FilesetResolver.forVisionTasks(`${MP_URL}/wasm`);
+      return { lib, fileset };
+    })();
+  }
+  return visionLib;
+}
+
+async function loadHands() {
+  try {
+    const { lib, fileset } = await loadVision();
+    const create = (delegate) => lib.HandLandmarker.createFromOptions(fileset, {
+      baseOptions: { modelAssetPath: HAND_MODEL, delegate },
+      runningMode: 'VIDEO',
+      numHands: 2,                     // 两只手都认：免得一只手「占着位子」，另一只手认不出来
+      minHandDetectionConfidence: 0.4, // 比默认的 0.5 放宽一点，侧着、斜着的手也容易认出来
+      minHandPresenceConfidence: 0.3,  // 认出来以后跟得更「黏」：手横过身体、挡在脸前时不容易跟丢
+      minTrackingConfidence: 0.3,
+    });
+    try {
+      handLandmarker = await create('GPU'); // 优先用显卡，快
+    } catch (err) {
+      console.warn('显卡模式用不了，改用 CPU', err);
+      handLandmarker = await create('CPU');
+    }
+    handStatus = 'ready';
+  } catch (err) {
+    console.error('手势识别加载失败', err);
+    handStatus = 'failed';
+  }
+  if (running) flashHint();
+  maybeAutoGuide(); // 手势识别好了：已经点过「开始」的话，开始带着校准
+}
+
+// 摄像头每来一张新画面，认一次手
+function trackHand(now) {
+  const t = Math.max(now, lastHandTime + 1);
+  lastHandTime = t;
+  let result;
+  try {
+    result = handLandmarker.detectForVideo(video, t);
+  } catch (err) {
+    console.error('手势识别出错', err);
+    handLandmarker = null;
+    handStatus = 'failed';
+    flashHint();
+    return;
+  }
+  handsFound = (result.landmarks || []).slice(0, 2).map((lm, i) => {
+    const mid = { x: (lm[4].x + lm[8].x) / 2, y: (lm[4].y + lm[8].y) / 2 }; // 两指中间（摄像头原始画面里）
+    const world = result.worldLandmarks && result.worldLandmarks[i];
+    return {
+      lm,
+      cam: { x: 1 - mid.x, y: mid.y }, // 在镜子画面里的位置（左右翻转过），0~1
+      mirror: toScreen(mid),           // 换算到屏幕上的位置
+      ratio: pinchRatio(world, lm),
+      palm: palmShape(world, lm),
+      palmPos: toScreen({ x: (lm[0].x + lm[9].x) / 2, y: (lm[0].y + lm[9].y) / 2 }), // 手掌中间（手腕和中指根的中点）
+      hand: handOf(result, i),
+    };
+  });
+  stats.hands++;
+  const slot = matchPens(handsFound, now);
+  pens.forEach((pen, k) => {
+    const i = slot.indexOf(k);
+    if (i >= 0) updatePen(pen, handsFound[i], now);
+    else penMissing(pen, now);
+  });
+}
+
+// 这一帧认出的手分别交给哪支笔：在镜子里离哪支笔的手上一次的位置近，就给谁；
+// 离两边都很远，就当成刚伸进来的手，交给空着的那支
+function matchPens(found, now) {
+  const far = 0.3 * Math.hypot(W, H);
+  const cost = (h, pen) => (pen.at && (pen.seen || now - pen.lostAt < 250)
+    ? Math.hypot(h.mirror.x - pen.at.x, h.mirror.y - pen.at.y)
+    : far);
+  if (found.length === 1) return [cost(found[0], pens[0]) <= cost(found[0], pens[1]) ? 0 : 1];
+  if (found.length === 2) {
+    const keep = cost(found[0], pens[0]) + cost(found[1], pens[1]);
+    const swap = cost(found[0], pens[1]) + cost(found[1], pens[0]);
+    return keep <= swap ? [0, 1] : [1, 0];
+  }
+  return [];
+}
+
+// MediaPipe 说的左右手，是按「镜像过的画面」算的；我们给它的是没翻转的摄像头画面，所以要反过来
+function handOf(result, i) {
+  const list = result.handedness || result.handednesses || [];
+  const name = list[i] && list[i][0] && list[i][0].categoryName;
+  return name === 'Left' ? 'right' : name === 'Right' ? 'left' : '';
+}
+
+function updatePen(pen, h, now) {
+  if (!pen.seen && now - pen.lostAt > 250) { // 手离开过一会儿又回来（可能换了一只手）：从头来
+    pen.filter.reset(); // 从新位置开始，别从老地方滑过来
+    pen.tally = { left: 0, right: 0 };
+  }
+  pen.seen = true;
+  pen.at = h.mirror;
+  pen.cam = h.cam;
+  pen.ratio = h.ratio;
+  pen.palm = h.palm;
+  // 是左手还是右手：刚出现的前 10 帧投票决定，之后不改（手伸到另一边时，识别有时会把左右认错）
+  if (h.hand && pen.tally.left + pen.tally.right < 10) pen.tally[h.hand]++;
+  pen.hand = pen.tally.left > pen.tally.right ? 'left' : 'right';
+
+  // 笔尖就在两指中间（镜子里你指尖的位置），再防一下抖
+  pen.pos = pen.filter.filter(h.mirror.x, h.mirror.y, now / 1000);
+
+  // 校准中：只记数值，不擦雾
+  if (guide) {
+    guideFeed(pen);
+    pen.votes = 0;
+    pen.palmSince = 0;
+    return;
+  }
+
+  // ① 捏住了没有：门槛按这只手、这个位置来定（见 pinchOnFor）
+  pen.on = pinchOnFor(pen);
+  const want = pen.pinched ? h.ratio <= pen.on + 0.06 : h.ratio < pen.on;
+  pen.votes = want === pen.pinched ? 0 : pen.votes + 1;
+
+  // ② 擦
+  if (pen.votes >= 2) {
+    pen.votes = 0;
+    pen.pinched = want;
+    pen.pausedAt = 0;
+    if (want) strokeStart(pen);
+    else strokeEnd(pen);
+  } else if (pen.pinched) {
+    // 手指刚开始张开（数值超过门槛，但还没确定松手）：先停笔，松手时擦痕就不会多拖出一截。
+    // 要是只晃了一下又捏紧了，就接着画：停了不到 0.15 秒直接连上，停久了从这里另起一笔
+    if (h.ratio > pen.on) {
+      if (!pen.pausedAt) { // 刚开始张开：把这一刻的位置画上（正好停在张开的地方），然后停笔
+        pen.pausedAt = now;
+        strokeAdd(pen);
+      }
+    } else {
+      if (pen.pausedAt && now - pen.pausedAt > 150) {
+        strokeEnd(pen);
+        strokeStart(pen);
+      }
+      pen.pausedAt = 0;
+      strokeAdd(pen);
+    }
+  }
+
+  // ③ 手掌五指并拢、举着不动：转满一圈就清除所有雾
+  updatePalm(pen, h, now);
+}
+
+// ---------- 手掌五指并拢、举着不动 1 秒：清除所有雾 ----------
+// 要举着不动、转满一圈才清：举手准备捏的时候手也常是张开的，一张开就清的话很容易不小心清掉
+const PALM_HOLD = 1000; // 要举多久（毫秒）
+function updatePalm(pen, h, now) {
+  if (!h.palm.flat || pen.pinched) {
+    if (now - pen.palmOkAt > 150) { // 偶尔一两帧没认出来不算；超过 0.15 秒才算放下，从头数
+      pen.palmSince = 0;
+      pen.palmDone = false;
+    }
+    return;
+  }
+  pen.palmOkAt = now;
+  pen.palmPos = h.palmPos;
+  const moved = pen.palmSince && Math.hypot(h.palmPos.x - pen.palmFrom.x, h.palmPos.y - pen.palmFrom.y) > 0.08 * Math.min(W, H);
+  if (!pen.palmSince || moved) { // 刚举起来，或者手动了：从头数
+    pen.palmSince = now;
+    pen.palmFrom = h.palmPos;
+  }
+  if (!pen.palmDone && now - pen.palmSince >= PALM_HOLD) {
+    pen.palmDone = true; // 清过了：手放下或者换个姿势之前，不再清第二次
+    clearAllFog();
+  }
+}
+
+// 手掌是不是「五指并拢」地张开着：四根手指都伸直（指根到指尖的直线距离，和三节加起来差不多长），
+// 而且相邻的指尖挨得近（指尖之间的距离 ÷ 手掌宽，都小于 0.42）。大拇指不管它
+function palmShape(world, lm) {
+  const P = world || lm.map((p) => ({ x: p.x * video.videoWidth, y: p.y * video.videoHeight, z: 0 }));
+  const dist = (a, b) => Math.hypot(P[a].x - P[b].x, P[a].y - P[b].y, P[a].z - P[b].z);
+  let straight = 1;
+  for (const f of [5, 9, 13, 17]) { // 食指、中指、无名指、小指的指根；往上三个点就是这根手指
+    straight = Math.min(straight, dist(f, f + 3) / Math.max(1e-6, dist(f, f + 1) + dist(f + 1, f + 2) + dist(f + 2, f + 3)));
+  }
+  const gap = Math.max(dist(8, 12), dist(12, 16), dist(16, 20)) / Math.max(1e-6, dist(5, 17)); // 5 到 17 = 手掌宽
+  return { straight, gap, flat: straight > 0.9 && gap < 0.42 };
+}
+
+// ---------- 捏合校准：屏幕上依次出现 9 个圆圈，把手移进去捏紧，记下每处捏紧时的数值 ----------
+// 手伸到身体另一边、往下伸时，摄像头是斜着看手的，捏紧时的数值会变大（越靠边越大）；手在自己这一边时又很小。
+// 所以一个门槛不够用：校准时屏幕上依次出现 9 个圆圈（左中右 × 上中下），把手移进圆圈、像平时擦雾那样捏住不动，
+// 圆圈转满就记下这里捏住时的数值。之后手在哪，就按附近几个点的数值平滑过渡来判断。左右手分开记。
+// 每次点「开始」都会先来一遍；之后点底部小圆圈里的「重新校准手势」或按 C 重新校准，Esc 跳过，Shift + C 按两次清除
+const GRID_COLS = 8, GRID_ROWS = 5, GRID_N = GRID_COLS * GRID_ROWS;  // 校准表：把镜子画面分成 8×5 格
+const GUIDE_COLS = [0.15, 0.5, 0.85], GUIDE_ROWS = [0.2, 0.5, 0.82]; // 9 个圆圈在屏幕上的位置（0~1）
+const GUIDE_ORDER = [[1, 1], [0, 1], [0, 0], [1, 0], [2, 0], [2, 1], [2, 2], [1, 2], [0, 2]]; // [列, 行]：先中间，再绕一圈
+const GUIDE_SAMPLES = 24; // 每个圆圈记多少帧（大约 0.8 秒）
+let pinchMaps = { left: null, right: null }; // 每只手一张表：{ closed: 每格捏紧时的数值, measured: 这格里有没有圆圈（各 40 格）, ref: 画面正中心的捏紧值 }
+let guide = null;     // 正在校准时：{ want: 要校准哪只手（不限就是 null）, hand: 认出的是哪只手, step: 第几个圆圈, samples: 这个圆圈记到的数, results: 做完的圆圈, done: 这只手好了没, doneHands: 这次已经校准好的手 }
+let clearArmedAt = 0; // 第一次按 Shift + C 的时间：3 秒内再按一次才真的清除
+
+try { // 上次校准的结果（存在这个浏览器里）
+  localStorage.removeItem('fogMirror.pinch');      // 以前几版存的，不再用了
+  localStorage.removeItem('fogMirror.pinchCalib');
+  localStorage.removeItem('fogMirror.guideSkipped');
+  const saved = JSON.parse(localStorage.getItem('fogMirror.pinchMap'));
+  for (const hand of ['left', 'right']) {
+    const m = saved && saved[hand];
+    if (!m || !Array.isArray(m.closed) || m.closed.length !== GRID_N) continue;
+    // 只认 9 个圆圈引导校准存的表；以前「自由走格子」存的不再用（那只手先用默认设置，等下次校准）
+    if (m.V && m.X && m.Y && typeof m.ref === 'number') pinchMaps[hand] = { ...m, measured: m.measured || [] };
+  }
+} catch (err) { /* 没存过或者存不了，就用默认值 */ }
+
+function savePinchMaps() {
+  try { localStorage.setItem('fogMirror.pinchMap', JSON.stringify(pinchMaps)); } catch (err) { /* 存不了也没关系 */ }
+}
+
+function handName(hand) { return hand === 'left' ? '左手' : '右手'; }
+
+function cellOf(p) { // 镜子里的位置（0~1）在第几个格子
+  const i = clamp(Math.floor(p.x * GRID_COLS), 0, GRID_COLS - 1);
+  const j = clamp(Math.floor(p.y * GRID_ROWS), 0, GRID_ROWS - 1);
+  return j * GRID_COLS + i;
+}
+
+function cellCenter(k) {
+  return { x: (k % GRID_COLS + 0.5) / GRID_COLS, y: (Math.floor(k / GRID_COLS) + 0.5) / GRID_ROWS };
+}
+
+// 这只手在现在的位置：数值小于多少算捏住（捏住以后，超过它就先停笔，大于它 + 0.06 才算松开）。
+// 画面中间的门槛 = 校准时在中间捏住的数值 + pinchMargin，最多到没校准时的 pinchOn：
+// 你捏住时数值本来就小的话，门槛也跟着低，手指张开一点就停，不用张很开（用户反馈过「要张很开才停」）。
+// 余量不能太小：校准时人往往捏得用力一些，记下的数偏小，余量太紧的话平时正常捏会认不出、擦着会断（试过 0.03~0.09，不行）。
+// 别的位置只看校准表里「这里比画面中间大多少、小多少」：另一边、底部（数值大）门槛跟着放宽；自己这一边（数值小）最多只收紧 0.04
+function pinchOnFor(pen) {
+  const map = pinchMaps[pen.hand];
+  if (!map) return SETTINGS.pinchOn;
+  const ref = clamp(map.ref, 0.08, 0.85); // 和 latticeValue 一样限制范围，两边才比得上
+  const center = clamp(ref + SETTINGS.pinchMargin, 0.18, SETTINGS.pinchOn);
+  return center + clamp(latticeValue(map, pen.cam) - ref, -0.04, 0.4);
+}
+
+// 三个点（位置 P、数值 V）之间，位置 t 处的数值：相邻两点之间按距离过渡；
+// 最外面的点再往外，按 ext 倍的趋势继续推（0 就是不再变）
+function along(P, V, t, ext) {
+  if (t <= P[0]) return V[0] + ((V[0] - V[1]) / (P[1] - P[0])) * (P[0] - t) * ext;
+  if (t >= P[2]) return V[2] + ((V[2] - V[1]) / (P[2] - P[1])) * (t - P[2]) * ext;
+  const i = t < P[1] ? 0 : 1;
+  return V[i] + (V[i + 1] - V[i]) * ((t - P[i]) / (P[i + 1] - P[i]));
+}
+
+// 9 个点的表里，镜子画面位置 p 处捏紧时的数值：先沿着左右、再沿着上下过渡。
+// 左右最外面的点再往外按一半的趋势推（另一边最边上通常还要更大一点）；上下就不推了
+function latticeValue(map, p) {
+  const rowValues = map.V.map((row) => along(map.X, row, p.x, 0.5));
+  return clamp(along(map.Y, rowValues, p.y, 0), 0.08, 0.85);
+}
+
+// ---------- 校准的按键和按钮 ----------
+const guideEl = $('guide');
+const guideTitle = $('guideTitle');
+const guideText = $('guideText');
+const guideOther = $('guideOther');
+const guideSkip = $('guideSkip');
+guideSkip.addEventListener('click', () => endGuide());
+$('calibBtn').addEventListener('click', (e) => { // 小气泡里的「重新校准手势」按钮：不用记快捷键
+  e.currentTarget.blur(); // 免得之后按空格又「点」了它一下
+  if (running && !guide) startGuide();
+});
+guideOther.addEventListener('click', () => startGuide(guide.hand === 'left' ? 'right' : 'left', guide.doneHands));
+
+window.addEventListener('keydown', (e) => {
+  if (!running) return;
+  if (e.code === 'Escape' && menuOpen) return setMenu(false);
+  if (e.code === 'Escape' && guide) return endGuide();
+  if (e.code !== 'KeyC' || e.repeat) return;
+  if (e.shiftKey) {
+    const now = performance.now();
+    if (now - clearArmedAt > 3000) { // 第一次按：只提醒，免得不小心清掉
+      clearArmedAt = now;
+      flashHint('再按一次 Shift + C，就会清除两只手的校准');
+      return;
+    }
+    clearArmedAt = 0;
+    pinchMaps = { left: null, right: null };
+    savePinchMaps();
+    flashHint('校准已清除：回到默认设置。想重新校准，点下面的小圆圈 →「重新校准手势」');
+    return;
+  }
+  if (!guide) startGuide();
+});
+
+// 每次点「开始」都先带着校准一下（每次坐的位置、离镜头远近、灯光都可能不一样）。
+// 不想做可以跳过，跳过就用上次存下的校准。
+// start() 和 loadHands() 谁后做完谁叫它（摄像头开好 + 手势识别下载好才能校准），所以每次开始只出现一次
+function maybeAutoGuide() {
+  if (!running || handStatus !== 'ready' || guide) return;
+  startGuide();
+}
+
+// doneHands：这次已经校准好的手（校准完一只、接着校准另一只时带过去）
+function startGuide(want = null, doneHands = []) {
+  setMenu(false);
+  for (const p of pens) {
+    if (p.pinched) { // 校准时不擦雾
+      p.pinched = false;
+      strokeEnd(p);
+    }
+  }
+  guide = { want, hand: null, step: 0, samples: [], results: [], done: false, doneHands };
+  show(guideEl);
+  updateOverlay();
+  showGuideText();
+}
+
+// 跳过 / 完成
+function endGuide() {
+  const doneNow = guide.doneHands.length > 0;
+  const saved = Boolean(pinchMaps.left || pinchMaps.right);
+  guide = null;
+  hide(guideEl);
+  updateOverlay();
+  flashHint(doneNow ? '校准好了，可以开始擦雾了 · 想重新校准，点下面的小圆圈'
+    : saved ? '已跳过校准：用上次的校准结果 · 想重新校准，点下面的小圆圈'
+    : '已跳过校准：先用默认设置 · 想校准随时点下面的小圆圈');
+}
+
+function showGuideText() {
+  const other = guide.hand === 'left' ? 'right' : 'left';
+  const otherDone = guide.doneHands.includes(other);
+  guideSkip.textContent = guide.done ? '完成' : '跳过';
+  guideOther.hidden = !guide.done || otherDone;
+  guideOther.textContent = `校准${handName(other)}`;
+  if (guide.done) {
+    guideTitle.textContent = `${handName(guide.hand)}校准好了 ✓`;
+    guideText.textContent = otherDone ? '两只手都校准好了，可以开始擦雾了。'
+      : `要不要也校准一下${handName(other)}？${pinchMaps[other] ? `（不校准就用${handName(other)}上次的结果）` : ''}`;
+  } else if (!guide.hand) {
+    guideTitle.textContent = '先花十几秒，校准一下捏合';
+    const usesLast = pinchMaps.left || pinchMaps.right ? '（不想校准就点「跳过」，用上次的结果）' : '';
+    guideText.textContent = guide.want
+      ? `换成${handName(guide.want)}，举到镜头前（${handName(guide.want === 'left' ? 'right' : 'left')}先放下）`
+      : `把你平时用来擦雾的那只手举到镜头前${usesLast}`;
+  } else {
+    guideTitle.textContent = `校准${handName(guide.hand)}（第 ${guide.step + 1}/${GUIDE_ORDER.length} 个圆圈）`;
+    guideText.textContent = '把手移进圆圈，像平时擦雾那样捏住（不用特别用力），别动，等圆圈转满一圈';
+  }
+}
+
+function guideTarget() { // 当前圆圈在屏幕上的位置和大小
+  const [c, r] = GUIDE_ORDER[guide.step];
+  return { x: GUIDE_COLS[c] * W, y: GUIDE_ROWS[r] * H, r: clamp(Math.min(W, H) * 0.08, 40, 80) };
+}
+
+// 校准中：每一帧看手在不在当前的圆圈里、有没有捏紧，是的话就记下数值
+function guideFeed(pen) {
+  if (guide.done) return;
+  if (!guide.hand) { // 还在等手：等这只手的左右投完票（出现 10 帧）再认准它
+    if (pen.tally.left + pen.tally.right < 10) return;
+    if (guide.want && pen.hand !== guide.want) return;
+    guide.hand = pen.hand;
+    showGuideText();
+  }
+  if (pen.hand !== guide.hand) return;
+  const t = guideTarget();
+  if (Math.hypot(pen.pos.x - t.x, pen.pos.y - t.y) > t.r) return; // 手不在圆圈里
+  if (pen.ratio > 0.75) return;                                    // 手指明显张开着，不算
+  guide.samples.push({ r: pen.ratio, cam: pen.cam });
+  if (guide.samples.length < GUIDE_SAMPLES) return;
+  const [c, r] = GUIDE_ORDER[guide.step]; // 这个圆圈做完了
+  guide.results.push({
+    c, r,
+    cam: { x: mean(guide.samples.map((s) => s.cam.x)), y: mean(guide.samples.map((s) => s.cam.y)) },
+    v: median(guide.samples.map((s) => s.r)), // 中位数：偶尔一两帧手松了也不影响
+  });
+  guide.samples = [];
+  guide.step++;
+  if (guide.step < GUIDE_ORDER.length) return showGuideText();
+  pinchMaps[guide.hand] = mapFromGuide(guide.results); // 9 个都做完了
+  savePinchMaps();
+  guide.done = true;
+  if (!guide.doneHands.includes(guide.hand)) guide.doneHands.push(guide.hand);
+  showGuideText();
+}
+
+// 用 9 个点做出这只手的校准表：X、Y 是三列、三行在镜子画面里的位置，V[行][列] 是那里捏紧时的数值。
+// 判断时直接在这 9 个点之间过渡（latticeValue），所以「自己那边涨得慢、另一边涨得快」也跟得上；
+// 另外换算出 8×5 格的 closed，只是给调试面板显示用
+function mapFromGuide(results) {
+  const at = (c, r) => results.find((p) => p.c === c && p.r === r);
+  const round2 = (v) => Math.round(v * 1000) / 1000;
+  const X = [0, 1, 2].map((c) => round2(mean([0, 1, 2].map((r) => at(c, r).cam.x))));
+  const Y = [0, 1, 2].map((r) => round2(mean([0, 1, 2].map((c) => at(c, r).cam.y))));
+  const V = [0, 1, 2].map((r) => [0, 1, 2].map((c) => round2(at(c, r).v)));
+  const map = { X, Y, V, ref: V[1][1] }; // 参照：正中间那个圆圈测到的数
+  map.closed = Array.from({ length: GRID_N }, (_, k) => Math.round(latticeValue(map, cellCenter(k)) * 100) / 100);
+  map.measured = new Array(GRID_N).fill(false);
+  for (const p of results) map.measured[cellOf(p.cam)] = true;
+  return map;
+}
+
+// 在透明画布上画当前的圆圈：虚线圈、转满的绿色进度、第几个；做完的圆圈留一个小绿点
+function drawGuide() {
+  if (!guide || guide.done || !guide.hand) return;
+  for (const p of guide.results) {
+    dotsCtx.beginPath();
+    dotsCtx.arc(GUIDE_COLS[p.c] * W, GUIDE_ROWS[p.r] * H, 6, 0, Math.PI * 2);
+    dotsCtx.fillStyle = 'rgba(126, 226, 168, 0.9)';
+    dotsCtx.fill();
+  }
+  const t = guideTarget();
+  const pen = pens.find((p) => p.seen && p.hand === guide.hand);
+  const inside = pen && Math.hypot(pen.pos.x - t.x, pen.pos.y - t.y) <= t.r;
+  dotsCtx.lineWidth = 3;
+  dotsCtx.setLineDash([8, 8]);
+  dotsCtx.strokeStyle = inside ? 'rgba(255, 255, 255, 0.95)' : 'rgba(255, 255, 255, 0.6)';
+  dotsCtx.beginPath();
+  dotsCtx.arc(t.x, t.y, t.r, 0, Math.PI * 2);
+  dotsCtx.stroke();
+  dotsCtx.setLineDash([]);
+  const progress = guide.samples.length / GUIDE_SAMPLES;
+  if (progress > 0) {
+    dotsCtx.lineWidth = 6;
+    dotsCtx.strokeStyle = 'rgba(126, 226, 168, 0.95)';
+    dotsCtx.beginPath();
+    dotsCtx.arc(t.x, t.y, t.r, -Math.PI / 2, -Math.PI / 2 + progress * Math.PI * 2);
+    dotsCtx.stroke();
+  }
+  dotsCtx.textAlign = 'center';
+  dotsCtx.textBaseline = 'middle';
+  dotsCtx.fillStyle = 'rgba(255, 255, 255, 0.95)';
+  dotsCtx.font = '600 16px -apple-system, "PingFang SC", sans-serif';
+  dotsCtx.fillText(`${guide.step + 1}/${GUIDE_ORDER.length}`, t.x, t.y);
+  if (inside && pen.ratio > 0.75) { // 手在圈里但手指张着：提醒一下
+    dotsCtx.font = '14px -apple-system, "PingFang SC", sans-serif';
+    dotsCtx.fillText('捏住手指', t.x, t.y + t.r + 18);
+  }
+}
+
+function penMissing(pen, now) {
+  if (pen.seen) {
+    pen.seen = false;
+    pen.lostAt = now;
+  }
+  pen.votes = 0;
+  if (now - pen.palmOkAt > 150) { // 手不见了：举着的手掌也不算了
+    pen.palmSince = 0;
+    pen.palmDone = false;
+  }
+  // 短暂看不到（比如手动得太快、画面糊了）先不松开；超过 0.25 秒才算松手
+  if (pen.pinched && now - pen.lostAt > 250) {
+    pen.pinched = false;
+    strokeEnd(pen);
+  }
+}
+
+// 捏得多紧 = 拇指和食指最前面那一小节之间最近的距离 ÷ 手掌长度（手腕到中指根）。
+// 比只量两个指尖更准：指肚贴指肚地捏，指尖不一定碰到，但这两小节一定挨在一起。
+// 用 MediaPipe 给的 3D「真实世界」坐标来算，手离镜头远近、手掌怎么转，结果都差不多
+function pinchRatio(world, lm) {
+  const P = world || lm.map((p) => ({ x: p.x * video.videoWidth, y: p.y * video.videoHeight, z: 0 }));
+  const along = (i, j, s) => ({ // 从 i 号点往 j 号点走 s（0~1）的位置
+    x: P[i].x + (P[j].x - P[i].x) * s,
+    y: P[i].y + (P[j].y - P[i].y) * s,
+    z: P[i].z + (P[j].z - P[i].z) * s,
+  });
+  const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y, a.z - b.z);
+  let gap = Infinity;
+  for (const s of [0.5, 0.75, 1]) {   // 只看靠指尖的那半节：握拳时指根那头也会挨着，不能算捏住
+    for (const u of [0.5, 0.75, 1]) gap = Math.min(gap, dist(along(3, 4, s), along(7, 8, u)));
+  }
+  return gap / Math.max(1e-6, dist(P[0], P[9]));
+}
+
+// ---------- 手势笔画：把一个个笔尖位置连成平滑的曲线去擦 ----------
+function strokeStart(pen) {
+  pen.stroke = [pen.pos];
+  wipe(pen.pos.x, pen.pos.y, pen.pos.x, pen.pos.y);
+}
+
+// 每来一个新位置，就把「上上个 → 上个」这一段补上。
+// 画曲线要知道前后的点，所以擦痕比笔尖晚一帧（大约 0.03 秒，看不出来）
+function strokeAdd(pen) {
+  const pts = pen.stroke, p = pen.pos;
+  const last = pts[pts.length - 1];
+  if (Math.hypot(p.x - last.x, p.y - last.y) < 1) return; // 几乎没动
+  pts.push(p);
+  const n = pts.length;
+  if (n >= 3) wipeCurve(pts[n - 4] || pts[n - 3], pts[n - 3], pts[n - 2], p);
+  if (n > 4) pts.shift();
+}
+
+function strokeEnd(pen) { // 松手时把最后一段补完
+  const pts = pen.stroke, n = pts.length;
+  if (n >= 2) wipeCurve(pts[n - 3] || pts[n - 2], pts[n - 2], pts[n - 1], pts[n - 1]);
+  pen.stroke = [];
+}
+
+// 沿着曲线从 b 擦到 c（a、d 是前后的点，决定往哪边弯），
+// 切成很多小段，所以拐弯是圆滑的，不是一节一节的折线
+function wipeCurve(a, b, c, d) {
+  const len = Math.hypot(c.x - b.x, c.y - b.y);
+  const steps = Math.max(1, Math.ceil(len / (brushRadius() * 0.25)));
+  let prev = b;
+  for (let s = 1; s <= steps; s++) {
+    const p = catmullRom(a, b, c, d, s / steps);
+    wipe(prev.x, prev.y, p.x, p.y);
+    prev = p;
+  }
+}
+
+// 「向心 Catmull-Rom」曲线上的一点：u 从 0 到 1，从 p1 走到 p2。
+// 「向心」的意思是按点和点距离的平方根来分配，快慢变化大的时候也不会绕出小圈
+function catmullRom(p0, p1, p2, p3, u) {
+  const k = (p, q) => Math.max(1e-3, Math.sqrt(Math.hypot(q.x - p.x, q.y - p.y)));
+  const t1 = k(p0, p1), t2 = t1 + k(p1, p2), t3 = t2 + k(p2, p3);
+  const t = t1 + (t2 - t1) * u;
+  const mix = (p, q, ta, tb) => {
+    const w = (t - ta) / (tb - ta);
+    return { x: p.x + (q.x - p.x) * w, y: p.y + (q.y - p.y) * w };
+  };
+  const a1 = mix(p0, p1, 0, t1), a2 = mix(p1, p2, t1, t2), a3 = mix(p2, p3, t2, t3);
+  const b1 = mix(a1, a2, 0, t2), b2 = mix(a2, a3, t1, t3);
+  return mix(b1, b2, t1, t2);
+}
+
+// 每一帧：把每只手的小圆圈挪到它的笔尖
+function drawPens(dt, now) {
+  for (const pen of pens) {
+    const visible = handStatus === 'ready' && pen.pos && (pen.seen || now - pen.lostAt < 300) && !palmHolding(pen, now);
+    pen.el.classList.toggle('show', Boolean(visible));
+    pen.el.classList.toggle('pinch', pen.pinched && !pen.pausedAt); // 手指刚张开、先停笔时就变空心，和擦痕一起停
+    if (!visible) {
+      pen.shown = null; // 下次出现时直接跳过去，不从老地方滑过来
+      continue;
+    }
+    if (!pen.shown) pen.shown = { x: pen.pos.x, y: pen.pos.y };
+    const k = 1 - Math.exp(-dt * 30); // 每帧往笔尖靠近一点：比一秒 30 次的识别结果看起来更顺
+    pen.shown.x += (pen.pos.x - pen.shown.x) * k;
+    pen.shown.y += (pen.pos.y - pen.shown.y) * k;
+    pen.el.style.transform = `translate(${pen.shown.x.toFixed(1)}px, ${pen.shown.y.toFixed(1)}px)`;
+  }
+}
+
+// 手掌五指并拢举着的时候：手掌上转一圈进度（转满就清除所有雾），这时那只手的小圆圈先藏起来
+const palmRing = $('palmRing');
+const palmBar = $('palmBar');
+const PALM_RING = 226.2; // 进度圈的周长（SVG 里半径 36）
+let palmShown = null;    // 进度圈画在哪（比识别结果再顺滑一点）
+function palmHolding(pen, now) { // 刚举起来的 0.2 秒先不显示，免得手掌一晃而过也闪一下
+  return Boolean(!guide && pen.palmSince && !pen.palmDone && now - pen.palmSince > 200 && now - pen.palmOkAt < 150);
+}
+function drawPalmRing(dt, now) {
+  const pen = pens.find((p) => palmHolding(p, now));
+  palmRing.classList.toggle('show', Boolean(pen));
+  if (!pen) {
+    palmShown = null;
+    return;
+  }
+  const progress = clamp((now - pen.palmSince) / PALM_HOLD, 0, 1);
+  palmBar.style.strokeDashoffset = (PALM_RING * (1 - progress)).toFixed(1);
+  if (!palmShown) palmShown = { x: pen.palmPos.x, y: pen.palmPos.y };
+  const k = 1 - Math.exp(-dt * 30);
+  palmShown.x += (pen.palmPos.x - palmShown.x) * k;
+  palmShown.y += (pen.palmPos.y - palmShown.y) * k;
+  palmRing.style.transform = `translate(${palmShown.x.toFixed(1)}px, ${palmShown.y.toFixed(1)}px)`;
+}
+
+// 「铺满裁切」：摄像头画面等比放大到刚好盖满窗口，多出来的边切掉，所以不会变形
+function coverFit() {
+  const vw = video.videoWidth, vh = video.videoHeight;
+  const s = Math.max(W / vw, H / vh);
+  const dw = vw * s, dh = vh * s;
+  return { dw, dh, ox: (W - dw) / 2, oy: (H - dh) / 2 };
+}
+
+// 识别结果的坐标（相对于摄像头原始画面，0~1）→ 屏幕上的位置。
+// x 要翻转，因为屏幕上显示的是镜像：手往右移，笔尖也往右
+function toScreen(p) {
+  const c = coverFit();
+  return { x: c.ox + (1 - p.x) * c.dw, y: c.oy + p.y * c.dh };
+}
+
+// =====================================================================
+//  5. WebGL：把「清晰镜像」和「磨砂镜像」按雾的浓度混在一起
 // =====================================================================
 let gl = null;
 let P = null;         // 几个着色器程序（在显卡上跑的小程序）
@@ -534,6 +1609,8 @@ uniform vec2 uMaskScale;
 uniform vec2 uScreen;
 uniform vec2 uTexelA;
 uniform vec2 uTexelB;
+uniform vec2 uMaskTexel;
+uniform float uDensity;  // 底部滑条：雾的浓度 0~1
 
 // 给每个位置一个固定的随机数 0~1
 float hash12(vec2 p) {
@@ -555,29 +1632,38 @@ vec3 smoothTex(sampler2D t, vec2 uv, vec2 texel) {
   return 0.25 * (texture2D(t, uv + vec2(-o.x, -o.y)).rgb + texture2D(t, uv + vec2(o.x, -o.y)).rgb
                + texture2D(t, uv + vec2(-o.x,  o.y)).rgb + texture2D(t, uv + vec2(o.x,  o.y)).rgb);
 }
+// 雾浓度表放大到屏幕时也取 4 个点平均，擦痕边缘的过渡更顺滑
+float maskAt(vec2 st) {
+  vec2 uv = st * uMaskScale;
+  vec2 o = uMaskTexel * 0.5;
+  return 0.25 * (texture2D(uMask, uv + vec2(-o.x, -o.y)).r + texture2D(uMask, uv + vec2(o.x, -o.y)).r
+               + texture2D(uMask, uv + vec2(-o.x,  o.y)).r + texture2D(uMask, uv + vec2(o.x,  o.y)).r);
+}
 
 void main() {
   vec2 st = vec2(vUv.x, 1.0 - vUv.y);
-  vec3 sharp = mirrorAt(st);                          // 清晰镜像
-  float m = texture2D(uMask, st * uMaskScale).r;      // 这里的雾有多浓：0~1
+  vec3 sharp = mirrorAt(st);                                    // 清晰镜像
+  // 这里的雾有多浓：0~1。滑条调低时，最浓的雾也只是一层薄雾
+  float m = maskAt(st) * min(1.0, 0.3 + 1.2 * uDensity);
   if (m < 0.004) { gl_FragColor = vec4(sharp, 1.0); return; }
 
-  // 雾越浓越模糊：薄雾用轻模糊，浓雾用重模糊
+  // 雾越浓越模糊：薄雾用轻模糊，浓雾用重模糊（最浓时也留一点轻模糊，影子不至于全糊掉）
   vec3 light = smoothTex(uBlurA, vUv, uTexelA);
   vec3 heavy = smoothTex(uBlurB, vUv, uTexelB);
-  vec3 blurred = mix(light, heavy, smoothstep(0.15, 0.8, m));
+  vec3 blurred = mix(light, heavy, 0.85 * smoothstep(0.15, 0.8, m));
 
-  // 发白、对比度变低：往「雾的颜色」上拉。周围越亮，雾也越亮
+  // 水蒸气：一层发亮的白纱，一团厚一团薄，像浴室里的水汽
   vec2 px = st * uScreen;
-  float uneven = 0.6 * vnoise(px / 160.0) + 0.4 * vnoise(px / 45.0);
+  float cloud = 0.7 * vnoise(px / 240.0) + 0.3 * vnoise(px / 95.0);        // 大团的云絮，很柔，没有颗粒
   float ambient = dot(heavy, vec3(0.299, 0.587, 0.114));
-  vec3 fogColor = vec3(0.93, 0.95, 0.98) * (0.5 + 0.42 * ambient);
-  float whiten = (0.26 + 0.34 * m) * (0.8 + 0.4 * uneven);
-  vec3 frosted = mix(blurred, fogColor, whiten);
-  frosted = mix(vec3(dot(frosted, vec3(0.299, 0.587, 0.114))), frosted, 0.8); // 颜色淡一点
-  frosted += (hash12(gl_FragCoord.xy) - 0.5) * 0.05;                         // 细颗粒
+  vec3 steam = vec3(0.93, 0.95, 0.98) * (0.72 + 0.26 * ambient);           // 水汽本身是亮的，周围越亮越亮
+  float veil = (0.22 + 0.3 * m) * (0.15 + 0.85 * uDensity) * (0.5 + 1.0 * cloud); // 白纱有多厚（各处厚薄不一）
+  vec3 frosted = mix(blurred, steam, veil);
+  frosted += max(blurred - 0.5, 0.0) * 0.35 * m;                            // 亮的地方在雾里晕开，有点发光
+  frosted = mix(vec3(dot(frosted, vec3(0.299, 0.587, 0.114))), frosted, 0.85); // 颜色淡一点
+  frosted += (hash12(gl_FragCoord.xy) - 0.5) / 255.0; // 极轻的抖动，眼睛看不出来，只是免得渐变出现一圈圈色带
 
-  gl_FragColor = vec4(mix(sharp, frosted, smoothstep(0.0, 0.55, m)), 1.0);
+  gl_FragColor = vec4(mix(sharp, frosted, smoothstep(0.0, 0.6, m)), 1.0);
 }`,
 };
 
@@ -673,7 +1759,11 @@ function pass(prog, target, textures, values) {
     gl.uniform1i(prog.loc[name], unit);
     unit++;
   }
-  for (const name in values) gl.uniform2f(prog.loc[name], values[name][0], values[name][1]); // 这里的参数都是两个数一组
+  for (const name in values) { // 参数要么是一个数，要么是两个数一组
+    const v = values[name];
+    if (typeof v === 'number') gl.uniform1f(prog.loc[name], v);
+    else gl.uniform2f(prog.loc[name], v[0], v[1]);
+  }
   gl.drawArrays(gl.TRIANGLES, 0, 3);
 }
 
@@ -722,20 +1812,22 @@ let watching = false;
 function watchVideoFrames() {
   if (!canWatchFrames || watching) return;
   watching = true;
-  const onFrame = () => { videoFresh = true; video.requestVideoFrameCallback(onFrame); };
+  const onFrame = () => {
+    videoFresh = true;
+    handFresh = true;
+    video.requestVideoFrameCallback(onFrame);
+  };
   video.requestVideoFrameCallback(onFrame);
 }
 
 function draw(now) {
-  const vw = video.videoWidth, vh = video.videoHeight;
-  if (!vw || !vh) return;
+  if (!video.videoWidth || !video.videoHeight) return;
+  const c = coverFit();
+  const mirror = { uVidScale: [W / c.dw, H / c.dh], uVidOffset: [c.ox / W, c.oy / H] };
 
-  // 「铺满裁切」：把摄像头画面等比放大到刚好盖满窗口，多出来的边切掉，所以不会变形
-  const s = Math.max(W / vw, H / vh);
-  const dw = vw * s, dh = vh * s;
-  const mirror = { uVidScale: [W / dw, H / dh], uVidOffset: [(W - dw) / 2 / W, (H - dh) / 2 / H] };
-
-  if (!canWatchFrames || videoFresh || now - lastVideoAt > 100) {
+  const overdue = now - lastVideoAt > 100; // 万一「新画面通知」没来，最多 0.1 秒也更新一次
+  if (!canWatchFrames || videoFresh || overdue) {
+    if (overdue) handFresh = true;
     videoFresh = false;
     lastVideoAt = now;
     gl.bindTexture(gl.TEXTURE_2D, videoTex);
@@ -755,11 +1847,13 @@ function draw(now) {
       uScreen: [W, H],
       uTexelA: [1 / T.a.w, 1 / T.a.h],
       uTexelB: [1 / T.b.w, 1 / T.b.h],
+      uMaskTexel: [1 / fog.w, 1 / fog.h],
+      uDensity: SETTINGS.fogDensity,
     });
 }
 
 // =====================================================================
-//  5. 每一帧：更新雾 → 画画面
+//  6. 每一帧：认手 → 更新雾 → 画画面 → 挪小圆圈
 // =====================================================================
 let lastT = 0;
 function loop(now) {
@@ -767,18 +1861,153 @@ function loop(now) {
   // 离上一帧过了几秒（切到别的窗口再回来时，最多按 0.1 秒算，雾不会一下子散光）
   const dt = lastT ? Math.min(0.1, (now - lastT) / 1000) : 0;
   lastT = now;
+  // 摄像头有新画面才认手（不支持「新画面通知」的浏览器，就每 33 毫秒认一次）
+  const handDue = canWatchFrames ? handFresh : now - lastHandTime > 33;
+  if (handLandmarker && handDue) {
+    handFresh = false;
+    trackHand(now);
+  }
   updateFog(dt);
   draw(now);
+  drawPens(dt, now);
+  drawPalmRing(dt, now);
+  updateDebug(now);
+  if (debugOn || guide) drawDots(); // 手上的小点、校准圆圈：每帧重画，动起来才顺
   requestAnimationFrame(loop);
+}
+
+// =====================================================================
+//  7. 调试面板（按 D 开关）：看实时数值、看认出来的手，方便调灵敏度
+// =====================================================================
+const debugEl = $('debug');
+const debugRows = $('debugRows');
+const dots = $('debugDots');
+const dotsCtx = dots.getContext('2d');
+let debugOn = false;
+let lastDebugAt = 0;
+const stats = { since: 0, frames: 0, hands: 0, fps: 0, handRate: 0 }; // 数一数每秒画了几帧、认了几次手
+
+window.addEventListener('keydown', (e) => {
+  if (e.code !== 'KeyD' || e.repeat) return;
+  debugOn = !debugOn;
+  debugEl.classList.toggle('hidden', !debugOn);
+  updateOverlay();
+  if (debugOn) renderDebug();
+});
+
+// 透明画布（手上的小点、校准格子）：调试面板开着、或者正在校准时才显示
+function updateOverlay() {
+  dots.classList.toggle('hidden', !(debugOn || guide));
+  if (debugOn || guide) drawDots();
+}
+
+function updateDebug(now) {
+  stats.frames++;
+  if (now - stats.since >= 500) { // 每半秒算一次「每秒多少次」
+    const sec = (now - stats.since) / 1000;
+    stats.fps = Math.round(stats.frames / sec);
+    stats.handRate = Math.round(stats.hands / sec);
+    stats.frames = 0;
+    stats.hands = 0;
+    stats.since = now;
+  }
+  if (debugOn && now - lastDebugAt > 100) { // 数字一秒刷新 10 次，再快就看不清了
+    lastDebugAt = now;
+    renderDebug();
+  }
+}
+
+function mapInfo(map) { return map ? `已校准（实测 ${map.measured.filter(Boolean).length} 格）` : '未校准'; }
+
+function renderDebug() {
+  const handText = (pen) => (pen.seen
+    ? `${handName(pen.hand)} ${pen.ratio.toFixed(2)} · ${pen.pinched ? '<span class="yes">捏住</span>' : '没捏'}（门槛 ${pen.on.toFixed(2)}）`
+    : '—');
+  const palmText = (pen) => (pen.seen && pen.palm
+    ? `伸直 ${pen.palm.straight.toFixed(2)} · 指缝 ${pen.palm.gap.toFixed(2)} · ${pen.palm.flat ? '<span class="yes">五指并拢</span>' : '不算'}`
+    : '—');
+  const rows = [
+    ['帧率', `${stats.fps} 帧/秒`],
+    ['认手', handStatus === 'ready' ? `${stats.handRate} 次/秒` : handStatus === 'loading' ? '加载中…' : '加载失败'],
+    ['画面里的手', `${handsFound.length} 只`],
+    ['手 1 捏合', handText(pens[0])],
+    ['手 2 捏合', handText(pens[1])],
+    ['手 1 手掌', palmText(pens[0])],
+    ['手 2 手掌', palmText(pens[1])],
+    ['清雾手势', '伸直大于 0.90、指缝小于 0.42 算五指并拢，举着不动 1 秒'],
+    ['捏合校准', `右手${mapInfo(pinchMaps.right)} · 左手${mapInfo(pinchMaps.left)}`],
+    ['校准方法', 'C 重新校准 · Esc 跳过 · Shift+C 按两次清除'],
+  ];
+  debugRows.innerHTML = rows.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('');
+}
+
+// 透明画布上画：校准时的圆圈；调试时再画校准表（每格的数值）和认出来的手上的小点
+// （绿点是手上的 21 个点，黄点是拇指尖和食指尖）
+function drawDots() {
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  const w = Math.round(W * dpr), h = Math.round(H * dpr);
+  if (dots.width !== w || dots.height !== h) {
+    dots.width = w;
+    dots.height = h;
+  }
+  dotsCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  dotsCtx.clearRect(0, 0, W, H);
+  drawGuide();
+  if (!debugOn) return;
+  drawGrid();
+  for (const { lm } of handsFound) {
+    lm.forEach((p, i) => {
+      const s = toScreen(p);
+      const tip = i === 4 || i === 8;
+      dotsCtx.beginPath();
+      dotsCtx.arc(s.x, s.y, tip ? 5 : 3, 0, Math.PI * 2);
+      dotsCtx.fillStyle = tip ? '#ffd166' : 'rgba(126, 226, 168, 0.9)';
+      dotsCtx.fill();
+    });
+  }
+}
+
+// 调试时：画出画面里这只手的校准表，每格写上它捏紧时的数值（白字是圆圈所在的格子，灰字是推算的）
+function drawGrid() {
+  const seenPen = pens.find((p) => p.seen);
+  const map = seenPen && !guide ? pinchMaps[seenPen.hand] : null;
+  if (!map) return;
+  dotsCtx.font = '12px -apple-system, "PingFang SC", sans-serif';
+  dotsCtx.textAlign = 'center';
+  dotsCtx.textBaseline = 'middle';
+  dotsCtx.lineWidth = 1;
+  dotsCtx.strokeStyle = 'rgba(255, 255, 255, 0.22)';
+  for (let k = 0; k < GRID_N; k++) {
+    const i = k % GRID_COLS, j = Math.floor(k / GRID_COLS);
+    const a = toScreen({ x: 1 - i / GRID_COLS, y: j / GRID_ROWS });             // 格子左上角
+    const b = toScreen({ x: 1 - (i + 1) / GRID_COLS, y: (j + 1) / GRID_ROWS }); // 格子右下角
+    dotsCtx.strokeRect(a.x + 0.5, a.y + 0.5, b.x - a.x - 1, b.y - a.y - 1);
+    dotsCtx.fillStyle = map.measured[k] ? 'rgba(255, 255, 255, 0.9)' : 'rgba(255, 255, 255, 0.45)';
+    dotsCtx.fillText(map.closed[k].toFixed(2), (a.x + b.x) / 2, (a.y + b.y) / 2);
+  }
 }
 
 // ---------- 小工具 ----------
 function show(el) { el.classList.remove('hidden'); }
 function hide(el) { el.classList.add('hidden'); }
 
+function clamp(v, lo, hi) { return Math.min(hi, Math.max(lo, v)); } // 把 v 限制在 lo~hi 之间
+
+function mean(list) { return list.reduce((a, b) => a + b, 0) / list.length; } // 平均数
+
+function median(list) { // 中位数：从小到大排好，取中间那个
+  const v = list.slice().sort((a, b) => a - b);
+  return v[Math.floor(v.length / 2)];
+}
+
 function smoothstep(a, b, x) { // 在 a~b 之间从 0 平滑地过渡到 1
   const t = Math.min(1, Math.max(0, (x - a) / (b - a)));
   return t * t * (3 - 2 * t);
+}
+
+function smootherstep(a, b, x) { // 和 smoothstep 一样，但两头过渡得更柔，擦痕边缘用它更顺滑
+  const t = Math.min(1, Math.max(0, (x - a) / (b - a)));
+  return t * t * t * (t * (t * 6 - 15) + 10);
 }
 
 function hash2(x, y) { // 给一个整数坐标一个固定的「随机数」0~1
