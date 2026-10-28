@@ -245,6 +245,23 @@
   .switch-row input:checked + .switch { background: rgba(126, 226, 168, 0.95); }
   .switch-row input:checked + .switch::after { transform: translateX(16px); }
   .switch-row input:focus-visible + .switch { box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.35); }
+  /* 小气泡里的「擦雾手势」：两个按钮选一个 */
+  .mode-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+  .seg { display: flex; padding: 2px; border-radius: 999px; background: rgba(255, 255, 255, 0.12); }
+  .seg button {
+    appearance: none;
+    -webkit-appearance: none;
+    padding: 5px 12px;
+    border: 0;
+    border-radius: 999px;
+    font: inherit;
+    font-size: 13px;
+    color: rgba(255, 255, 255, 0.75);
+    background: transparent;
+    cursor: pointer;
+    transition: background-color 0.2s ease, color 0.2s ease;
+  }
+  .seg button.on { color: #15181c; background: rgba(255, 255, 255, 0.92); }
   .slider input {
     --fill: 60%;
     flex: 1;
@@ -459,6 +476,13 @@
         <input id="brush" type="range" min="0" max="100" step="1" value="53">
         <output id="brushValue">53%</output>
       </label>
+      <div class="mode-row">
+        <span>擦雾手势</span>
+        <div id="drawModes" class="seg">
+          <button type="button" data-mode="pinch">捏住</button>
+          <button type="button" data-mode="point">竖起食指</button>
+        </div>
+      </div>
       <label class="switch-row">
         <span>辅助书写<small>线条更平滑：墨迹跟在指尖后面一小段</small></span>
         <input id="assist" type="checkbox">
@@ -611,7 +635,9 @@ function hintText() {
   if (faceStatus === 'ready') parts.push('脸靠近镜头，张嘴「哈——」起雾');
   else if (faceStatus === 'failed') parts.push('哈气识别没加载成功（检查一下网络），先按空格起雾');
   else parts.push('哈气识别加载中…（先按空格起雾）');
-  if (handStatus === 'ready') parts.push('捏住拇指和食指擦雾', '手掌张开左右来回抹 3 下（或按 X）：清掉所有雾');
+  if (handStatus === 'ready') {
+    parts.push(drawMode === 'point' ? '竖起食指擦雾（伸出中指就停）' : '捏住拇指和食指擦雾', '手掌张开左右来回抹 3 下（或按 X）：清掉所有雾');
+  }
   else if (handStatus === 'failed') parts.push('手势识别没加载成功（检查一下网络），先用鼠标擦');
   else parts.push('手势识别加载中…先用鼠标擦');
   parts.push('D 调试');
@@ -720,6 +746,29 @@ assistBox.addEventListener('change', () => {
   try { localStorage.setItem('fogMirror.assist', assistOn ? '1' : '0'); } catch (err) { /* 存不了也没关系 */ }
   flashHint(assistOn ? '辅助书写开了：墨迹跟在指尖后面一小段，写出来的线更平滑' : '辅助书写关了：墨迹贴在指尖上');
 });
+
+// ---------- 小气泡里的「擦雾手势」：捏住（默认），或者竖起食指（见 pointPose）。存在这个浏览器里 ----------
+let drawMode = 'pinch';
+try { if (localStorage.getItem('fogMirror.drawMode') === 'point') drawMode = 'point'; } catch (err) { /* 用默认：捏住 */ }
+const modeButtons = document.querySelectorAll('#drawModes button');
+function showDrawMode() { modeButtons.forEach((b) => b.classList.toggle('on', b.dataset.mode === drawMode)); }
+showDrawMode();
+modeButtons.forEach((b) => b.addEventListener('click', () => {
+  b.blur();
+  if (b.dataset.mode === drawMode) return;
+  drawMode = b.dataset.mode;
+  for (const p of pens) { // 正在擦的先停下，换了手势重新开始
+    if (p.pinched) strokeEnd(p);
+    p.pinched = false;
+    p.pausedAt = 0;
+    p.votes = 0;
+  }
+  try { localStorage.setItem('fogMirror.drawMode', drawMode); } catch (err) { /* 存不了也没关系 */ }
+  showDrawMode();
+  flashHint(drawMode === 'point'
+    ? '换成竖起食指擦雾：竖起食指（其它手指弯着）就擦，伸出中指就停'
+    : '换成捏住擦雾：捏住拇指和食指就擦，松开就停');
+}));
 
 // 等摄像头画面真正有了尺寸（有的浏览器 play() 之后还要再等一下）
 function videoHasSize() {
@@ -1042,7 +1091,10 @@ function makePen() {
     ropeEl: make('rope'),
     seen: false,    // 现在画面里有没有这只手
     lostAt: 0,      // 从什么时候开始看不到它
-    ratio: 1,       // 捏得多紧：越小越紧（见 pinchRatio）
+    ratio: 1,       // 捏得多紧：越小越紧（最近三次的中间值，见 pinchParts）
+    ratioHist: [],  // 最近三次的捏合数值
+    r2: 1, r3: 1,   // 平面、立体两种量法各自的数值（调试面板显示）
+    fingers: [1, 1, 1, 1], // 食指、中指、无名指、小指有多直（竖起食指模式用）
     pinched: false, // 现在算不算捏住
     votes: 0,       // 连续几帧「想换状态」：连续 2 帧才真的换，偶尔看错一帧不算
     at: null,       // 这只手在屏幕上的位置（用来分辨哪只手是哪只）
@@ -1055,6 +1107,7 @@ function makePen() {
     filter: new OneEuroFilter(1.5, 0.02),
     stroke: [],     // 这一笔最近的几个笔尖位置
     pausedAt: 0,    // 手指刚开始张开、先停笔的时间（0 = 没停）
+    releaseAt: 0,   // 从什么时候开始一直是松开的样子（满 0.2 秒才真的算松手）
     palm: null,     // 手掌的样子：{ straight: 四根手指多直, open: 算不算张开的手掌 }（见 palmShape）
     palmPos: null,  // 手掌中间在屏幕上的位置（进度圈画在这）
     wave: { active: false, passes: 0, okAt: 0 }, // 手掌来回抹了几下（见 updatePalm）
@@ -1118,13 +1171,19 @@ function trackHand(now) {
   }
   handsFound = (result.landmarks || []).slice(0, 2).map((lm, i) => {
     const mid = { x: (lm[4].x + lm[8].x) / 2, y: (lm[4].y + lm[8].y) / 2 }; // 两指中间（摄像头原始画面里）
+    const tip = drawMode === 'point' && !guide ? lm[8] : mid; // 笔尖：捏住是两指中间，竖起食指是食指尖（校准时总是两指中间）
     const world = result.worldLandmarks && result.worldLandmarks[i];
+    const pinch = pinchParts(world, lm);
+    const fingers = fingerStraightness(world, lm);
     return {
       lm,
-      cam: { x: 1 - mid.x, y: mid.y }, // 在镜子画面里的位置（左右翻转过），0~1
-      mirror: toScreen(mid),           // 换算到屏幕上的位置
-      ratio: pinchRatio(world, lm),
-      palm: palmShape(world, lm),
+      cam: { x: 1 - tip.x, y: tip.y }, // 在镜子画面里的位置（左右翻转过），0~1
+      mirror: toScreen(tip),           // 换算到屏幕上的位置
+      ratio: pinch.ratio,
+      r2: pinch.r2,                    // 平面量的（调试面板显示）
+      r3: pinch.r3,                    // 立体量的
+      fingers,
+      palm: palmShape(fingers),
       palmPos: toScreen({ x: (lm[0].x + lm[9].x) / 2, y: (lm[0].y + lm[9].y) / 2 }), // 手掌中间（手腕和中指根的中点）
       hand: handOf(result, i),
     };
@@ -1165,11 +1224,17 @@ function updatePen(pen, h, now) {
   if (!pen.seen && now - pen.lostAt > 250) { // 手离开过一会儿又回来（可能换了一只手）：从头来
     pen.filter.reset(); // 从新位置开始，别从老地方滑过来
     pen.tally = { left: 0, right: 0 };
+    pen.ratioHist = [];
   }
   pen.seen = true;
   pen.at = h.mirror;
   pen.cam = h.cam;
-  pen.ratio = h.ratio;
+  pen.ratioHist.push(h.ratio); // 捏合数值取最近三次的中间那个：偶尔一帧跳一下（手动得快、画面糊了）不算
+  if (pen.ratioHist.length > 3) pen.ratioHist.shift();
+  pen.ratio = median(pen.ratioHist);
+  pen.r2 = h.r2;
+  pen.r3 = h.r3;
+  pen.fingers = h.fingers;
   pen.palm = h.palm;
   // 是左手还是右手：刚出现的前 10 帧投票决定，之后不改（手伸到另一边时，识别有时会把左右认错）
   if (h.hand && pen.tally.left + pen.tally.right < 10) pen.tally[h.hand]++;
@@ -1186,30 +1251,48 @@ function updatePen(pen, h, now) {
     return;
   }
 
-  // ① 捏住了没有：门槛按这只手、这个位置来定（见 pinchOnFor）
-  pen.on = pinchOnFor(pen);
-  const want = pen.pinched ? h.ratio <= pen.on + 0.06 : h.ratio < pen.on;
-  pen.votes = want === pen.pinched ? 0 : pen.votes + 1;
-
+  // ① 在不在擦：捏住模式看捏合数值（门槛按这只手、这个位置来定，见 pinchOnFor）；
+  //    竖起食指模式看手指伸没伸直（见 pointPose）。opening = 这一帧已经不像在擦了：先停笔
+  let want, opening;
+  if (drawMode === 'point') {
+    const p = pointPose(pen.fingers);
+    want = pen.pinched ? p.keep : p.start;
+    opening = !p.keep;
+  } else {
+    pen.on = pinchOnFor(pen);
+    want = pen.pinched ? pen.ratio <= pen.on + 0.06 : pen.ratio < pen.on;
+    opening = pen.ratio > pen.on;
+  }
   // ② 擦（开着辅助书写的话，擦的是被「绳子」拉着的墨迹位置，见 followInk）
   if (assistOn && pen.pinched && !pen.pausedAt) followInk(pen);
-  if (pen.votes >= 2) {
-    pen.votes = 0;
-    pen.pinched = want;
-    pen.pausedAt = 0;
-    if (want) strokeStart(pen);
-    else strokeEnd(pen);
-  } else if (pen.pinched) {
-    // 手指刚开始张开（数值超过门槛，但还没确定松手）：先停笔，松手时擦痕就不会多拖出一截。
-    // 要是只晃了一下又捏紧了，就接着画：停了不到 0.15 秒直接连上，停久了从这里另起一笔
-    if (h.ratio > pen.on) {
+  if (!pen.pinched) {
+    pen.votes = want ? pen.votes + 1 : 0; // 连续 2 帧像在擦才开始，偶尔看错一帧不算
+    if (pen.votes >= 2) {
+      pen.votes = 0;
+      pen.pinched = true;
+      pen.pausedAt = 0;
+      pen.releaseAt = 0;
+      strokeStart(pen);
+    }
+  } else {
+    // 真正松手：要一直是松开的样子 0.2 秒。偶尔几帧数值乱跳（手动得快、画面糊了）只会先停笔，
+    // 回来后接着连上，线不会断（以前连续 2 帧就算松手，用户反馈「擦着擦着会断」）
+    pen.releaseAt = want ? 0 : pen.releaseAt || now;
+    if (pen.releaseAt && now - pen.releaseAt >= 200) {
+      pen.pinched = false;
+      pen.pausedAt = 0;
+      pen.releaseAt = 0;
+      strokeEnd(pen);
+    } else if (opening) {
+      // 手指刚开始张开（数值超过门槛，但还没确定松手）：先停笔，松手时擦痕就不会多拖出一截。
+      // 要是只晃了一下又捏紧了，就接着画：停了不到 0.25 秒直接连上，停久了从这里另起一笔
       if (!pen.pausedAt) { // 刚开始张开：把这一刻的位置画上（正好停在张开的地方），然后停笔
         pen.pausedAt = now;
         if (assistOn) pen.ink = { x: pen.pos.x, y: pen.pos.y }; // 辅助书写：墨迹直接连到指尖，这一笔停在手指停下的地方
         strokeAdd(pen);
       }
     } else {
-      if (pen.pausedAt && now - pen.pausedAt > 150) {
+      if (pen.pausedAt && now - pen.pausedAt > 250) {
         strokeEnd(pen);
         strokeStart(pen);
       }
@@ -1230,7 +1313,7 @@ function waveStep() { return Math.max(60, W * 0.12); } // 每一下至少要横�
 
 function updatePalm(pen, h, now) {
   const w = pen.wave;
-  if (!h.palm.open || pen.pinched || h.ratio < 0.5) { // 不是张开的手掌（或者正捏着、快要捏上）
+  if (!h.palm.open || pen.pinched || pen.ratio < 0.5) { // 不是张开的手掌（或者正在擦、快要捏上）
     if (now - w.okAt > 250) resetWave(pen); // 抹得快时偶尔几帧认不准，不算断
     return;
   }
@@ -1269,16 +1352,27 @@ function updatePalm(pen, h, now) {
 
 function resetWave(pen) { pen.wave = { active: false, passes: 0, okAt: pen.wave.okAt }; }
 
-// 手掌是不是张开的：食指到小指四根手指都伸直（指根到指尖的直线距离，和三节加起来差不多长）。
-// 手指并拢、分开都行，大拇指不管它
-function palmShape(world, lm) {
+// 四根手指（食指、中指、无名指、小指）各自有多直：指根到指尖的直线距离 ÷ 三节长度加起来。
+// 伸直时差不多是 1，弯起来就小（握拳大约 0.3~0.5）
+function fingerStraightness(world, lm) {
   const P = world || lm.map((p) => ({ x: p.x * video.videoWidth, y: p.y * video.videoHeight, z: 0 }));
-  const dist = (a, b) => Math.hypot(P[a].x - P[b].x, P[a].y - P[b].y, P[a].z - P[b].z);
-  let straight = 1;
-  for (const f of [5, 9, 13, 17]) { // 食指、中指、无名指、小指的指根；往上三个点就是这根手指
-    straight = Math.min(straight, dist(f, f + 3) / Math.max(1e-6, dist(f, f + 1) + dist(f + 1, f + 2) + dist(f + 2, f + 3)));
-  }
+  const d = (a, b) => dist3(P[a], P[b]);
+  return [5, 9, 13, 17].map((f) => d(f, f + 3) / Math.max(1e-6, d(f, f + 1) + d(f + 1, f + 2) + d(f + 2, f + 3))); // 指根是 5、9、13、17 号点，往上三个点就是这根手指
+}
+
+// 手掌是不是张开的：四根手指都伸直（并拢、分开都行，大拇指不管它）
+function palmShape(fingers) {
+  const straight = Math.min(...fingers);
   return { straight, open: straight > 0.85 };
+}
+
+// ---------- 竖起食指写字（小气泡里切换）：食指伸直、中指和无名指弯着就擦；伸出中指（或者食指弯下来）就停 ----------
+// 不用捏，所以不怕两个指尖互相挡住、远近猜不准。开始时要求严一点，擦的过程中放宽一点，免得擦着擦着断
+function pointPose(f) {
+  return {
+    start: f[0] > 0.85 && f[1] < 0.7 && f[2] < 0.75,
+    keep: f[0] > 0.75 && f[1] < 0.8 && f[2] < 0.85,
+  };
 }
 
 // ---------- 辅助书写（防抖绳）：墨迹跟在指尖后面一小段，像用一根短绳子拉着笔 ----------
@@ -1319,10 +1413,11 @@ try { // 上次校准的结果（存在这个浏览器里）
   localStorage.removeItem('fogMirror.pinchCalib');
   localStorage.removeItem('fogMirror.guideSkipped');
   const saved = JSON.parse(localStorage.getItem('fogMirror.pinchMap'));
-  // 以前左右手认反了，存的「左手」其实是右手：没有 hands: 'real' 记号的旧表，左右对调一下再用，不用重新校准
-  const swap = saved && saved.hands !== 'real';
+  // 只认用现在的量法（立体、平面取小的，见 pinchParts）校准的表（metric: 2）。以前只用立体量的表数值偏大，
+  // 用了反而不准，要重新校准（每次点「开始」都会带着校准）
+  const current = saved && saved.metric === 2;
   for (const hand of ['left', 'right']) {
-    const m = saved && saved[swap ? (hand === 'left' ? 'right' : 'left') : hand];
+    const m = current && saved[hand];
     if (!m || !Array.isArray(m.closed) || m.closed.length !== GRID_N) continue;
     // 只认 9 个圆圈引导校准存的表；以前「自由走格子」存的不再用（那只手先用默认设置，等下次校准）
     if (m.V && m.X && m.Y && typeof m.ref === 'number') pinchMaps[hand] = { ...m, measured: m.measured || [] };
@@ -1330,7 +1425,7 @@ try { // 上次校准的结果（存在这个浏览器里）
 } catch (err) { /* 没存过或者存不了，就用默认值 */ }
 
 function savePinchMaps() {
-  try { localStorage.setItem('fogMirror.pinchMap', JSON.stringify({ ...pinchMaps, hands: 'real' })); } catch (err) { /* 存不了也没关系 */ }
+  try { localStorage.setItem('fogMirror.pinchMap', JSON.stringify({ ...pinchMaps, metric: 2 })); } catch (err) { /* 存不了也没关系 */ }
 }
 
 function handName(hand) { return hand === 'left' ? '左手' : '右手'; }
@@ -1412,7 +1507,7 @@ window.addEventListener('keydown', (e) => {
 // 不想做可以跳过，跳过就用上次存下的校准。
 // start() 和 loadHands() 谁后做完谁叫它（摄像头开好 + 手势识别下载好才能校准），所以每次开始只出现一次
 function maybeAutoGuide() {
-  if (!running || handStatus !== 'ready' || guide) return;
+  if (!running || handStatus !== 'ready' || guide || drawMode === 'point') return; // 竖起食指不用捏，不用校准
   startGuide();
 }
 
@@ -1569,23 +1664,35 @@ function penMissing(pen, now) {
   }
 }
 
-// 捏得多紧 = 拇指和食指最前面那一小节之间最近的距离 ÷ 手掌长度（手腕到中指根）。
-// 比只量两个指尖更准：指肚贴指肚地捏，指尖不一定碰到，但这两小节一定挨在一起。
-// 用 MediaPipe 给的 3D「真实世界」坐标来算，手离镜头远近、手掌怎么转，结果都差不多
-function pinchRatio(world, lm) {
-  const P = world || lm.map((p) => ({ x: p.x * video.videoWidth, y: p.y * video.videoHeight, z: 0 }));
+// 捏得多紧 = 拇指和食指最前面那一小节之间最近的距离 ÷ 手掌大小，越小越紧。
+// 比只量两个指尖更准：指肚贴指肚地捏，指尖不一定碰到，但这两小节一定挨在一起。用两种量法，取小的那个：
+// ① 立体：MediaPipe 猜的 3D「真实世界」坐标，÷ 手腕到中指根。手怎么转都量得出，但远近是从平面画面里猜的，
+//    手转个角度、手指互相挡住、伸到另一边时常猜错，数值会跳、会变大；
+// ② 平面：画面上的位置，÷ 画面里手掌的大小。两个指尖在画面里挨没挨上看得最清楚，不受「猜远近」影响。
+// 真捏住的时候至少有一种量法觉得很近，取小的那个，捏紧了就不容易认不出来
+// （以前只用立体的，用户反馈「捏紧了还是空心」「擦着擦着会断」「某个位置特别差」）
+function pinchParts(world, lm) {
+  const flat = lm.map((p) => ({ x: p.x * video.videoWidth, y: p.y * video.videoHeight, z: 0 }));
+  const size2 = Math.max(dist3(flat[0], flat[9]), 1.2 * dist3(flat[5], flat[17])); // 画面里手掌多大：长、宽取大的，手往前倾、侧过来都不会算小
+  const r2 = tipGap(flat) / Math.max(1e-6, size2);
+  const r3 = world ? tipGap(world) / Math.max(1e-6, dist3(world[0], world[9])) : r2;
+  return { r2, r3, ratio: Math.min(r2, r3) };
+}
+
+function tipGap(P) { // 拇指、食指靠指尖那半节之间最近的距离（握拳时指根那头也会挨着，不能算捏住，所以只看前半节）
   const along = (i, j, s) => ({ // 从 i 号点往 j 号点走 s（0~1）的位置
     x: P[i].x + (P[j].x - P[i].x) * s,
     y: P[i].y + (P[j].y - P[i].y) * s,
     z: P[i].z + (P[j].z - P[i].z) * s,
   });
-  const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y, a.z - b.z);
   let gap = Infinity;
-  for (const s of [0.5, 0.75, 1]) {   // 只看靠指尖的那半节：握拳时指根那头也会挨着，不能算捏住
-    for (const u of [0.5, 0.75, 1]) gap = Math.min(gap, dist(along(3, 4, s), along(7, 8, u)));
+  for (const s of [0.5, 0.75, 1]) {
+    for (const u of [0.5, 0.75, 1]) gap = Math.min(gap, dist3(along(3, 4, s), along(7, 8, u)));
   }
-  return gap / Math.max(1e-6, dist(P[0], P[9]));
+  return gap;
 }
+
+function dist3(a, b) { return Math.hypot(a.x - b.x, a.y - b.y, a.z - b.z); }
 
 // ---------- 手势笔画：把一个个笔尖位置连成平滑的曲线去擦 ----------
 function strokeStart(pen) {
@@ -1647,7 +1754,8 @@ function drawPens(dt, now) {
   for (const pen of pens) {
     const visible = handStatus === 'ready' && pen.pos && (pen.seen || now - pen.lostAt < 300) && !waving(pen, now);
     pen.el.classList.toggle('show', Boolean(visible));
-    pen.el.classList.toggle('pinch', pen.pinched && !pen.pausedAt); // 手指刚张开、先停笔时就变空心，和擦痕一起停
+    // 先停笔超过 0.1 秒就变空心，和擦痕一起停（偶尔一两帧数值跳一下不会闪）
+    pen.el.classList.toggle('pinch', pen.pinched && !(pen.pausedAt && now - pen.pausedAt >= 100));
     // 辅助书写、正在写：墨迹小圆点 + 连着指尖的绳子
     const roped = Boolean(visible && assistOn && pen.pinched && !pen.pausedAt && pen.ink);
     pen.inkEl.classList.toggle('show', roped);
@@ -2246,9 +2354,15 @@ function renderDebug(now = performance.now()) {
   const breathText = breath.on ? `<span class="yes">哈气中</span> · 雾扩到 ${Math.round(breath.level * 100)}%`
     : breath.since ? `准备中（再保持 ${Math.max(0, (SETTINGS.breathHold - (now - breath.since)) / 1000).toFixed(1)} 秒）`
     : '没有';
-  const handText = (pen) => (pen.seen
-    ? `${handName(pen.hand)} ${pen.ratio.toFixed(2)} · ${pen.pinched ? '<span class="yes">捏住</span>' : '没捏'}（门槛 ${pen.on.toFixed(2)}）`
-    : '—');
+  const handText = (pen) => {
+    if (!pen.seen) return '—';
+    if (drawMode === 'point') {
+      const f = pen.fingers;
+      return `${handName(pen.hand)} 食指 ${f[0].toFixed(2)} · 中指 ${f[1].toFixed(2)} · 无名指 ${f[2].toFixed(2)} · ${pen.pinched ? '<span class="yes">在擦</span>' : '没擦'}`;
+    }
+    return `${handName(pen.hand)} ${pen.ratio.toFixed(2)}（立体 ${pen.r3.toFixed(2)} · 平面 ${pen.r2.toFixed(2)}）· `
+      + `${pen.pinched ? '<span class="yes">捏住</span>' : '没捏'}（门槛 ${pen.on.toFixed(2)}）`;
+  };
   const palmText = (pen) => (pen.seen && pen.palm
     ? `伸直 ${pen.palm.straight.toFixed(2)} · ${pen.palm.open ? '<span class="yes">手掌张开</span>' : '不算'}${pen.wave.passes ? ` · 抹了 ${pen.wave.passes} 下` : ''}`
     : '—');
@@ -2261,8 +2375,11 @@ function renderDebug(now = performance.now()) {
     ['脸的大小', face ? `${face.size.toFixed(2)}（要 ≥ ${SETTINGS.breathClose.toFixed(2)}，越靠近镜头越大）` : '—'],
     ['哈气', breathText],
     ['画面里的手', `${handsFound.length} 只`],
-    ['手 1 捏合', handText(pens[0])],
-    ['手 2 捏合', handText(pens[1])],
+    ['擦雾手势', drawMode === 'point'
+      ? '竖起食指：食指伸直 > 0.85、中指 < 0.70、无名指 < 0.75 开始擦；擦着时食指 < 0.75 或中指 > 0.80 就停'
+      : '捏住：立体、平面两种量法取小的，再取最近三次的中间值'],
+    ['手 1', handText(pens[0])],
+    ['手 2', handText(pens[1])],
     ['手 1 手掌', palmText(pens[0])],
     ['手 2 手掌', palmText(pens[1])],
     ['清雾手势', `伸直大于 0.85 算手掌张开，左右来回抹 ${WAVE_PASSES} 下（每下横着走 ${Math.round(waveStep())} 像素以上）`],
