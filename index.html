@@ -25,6 +25,8 @@
 
   /* 镜子：铺满整个窗口的画布 */
   #view { position: fixed; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; }
+  /* 水珠、往下流的水珠：画在镜子上面一层透明画布上，不挡鼠标擦雾 */
+  .water { position: fixed; inset: 0; z-index: 1; width: 100%; height: 100%; pointer-events: none; }
 
   /* 摄像头的原始画面只给程序读，不给人看。
      不能用 display:none 完全藏起来，否则有的浏览器会停止更新画面。 */
@@ -198,8 +200,9 @@
   }
   .bottom.menu-open .hint { opacity: 0; transition-duration: 0.15s; } /* 气泡会盖到提示的位置：打开时先把提示藏起来 */
   .slider { display: flex; align-items: center; gap: 12px; min-width: 0; cursor: pointer; }
-  .slider span { white-space: nowrap; }
-  .slider output { min-width: 2.8em; text-align: right; font-variant-numeric: tabular-nums; }
+  .slider span { min-width: 5em; white-space: nowrap; } /* 名字一样宽，几个滑条才对得齐 */
+  .slider output { min-width: 3.6em; text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+  .menu-note { margin-top: 2px; font-size: 12px; text-align: center; color: rgba(255, 255, 255, 0.55); }
   .menu-actions { display: flex; gap: 10px; margin-top: 4px; }
   .menu-action {
     appearance: none;
@@ -347,6 +350,38 @@
     text-shadow: 0 1px 4px rgba(0, 0, 0, 0.6);
   }
 
+  /* ---------- 录屏中的小标记（右上角，不会录进视频里）；截屏时屏幕白闪一下 ---------- */
+  .rec-badge {
+    position: fixed;
+    top: max(16px, env(safe-area-inset-top));
+    right: 16px;
+    z-index: 5;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 7px 14px;
+    border-radius: 999px;
+    font-size: 13px;
+    font-variant-numeric: tabular-nums;
+    color: #fff;
+    background: rgba(10, 12, 15, 0.55);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    pointer-events: none;
+  }
+  .rec-badge::before {
+    content: '';
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+    background: #ff4d4f;
+    animation: rec-blink 1s ease-in-out infinite;
+  }
+  @keyframes rec-blink { 50% { opacity: 0.25; } }
+  .rec-badge.hidden { display: none; }
+  .flash { position: fixed; inset: 0; z-index: 6; background: #fff; pointer-events: none; opacity: 0; transition: opacity 0.35s ease-out; }
+  .flash.on { opacity: 0.55; transition: none; }
+
   /* ---------- 手势的笔尖：没捏时空心，捏住时实心 ---------- */
   .pen {
     position: fixed;
@@ -449,6 +484,9 @@
 <body>
 
 <canvas id="view"></canvas>
+<canvas id="water" class="water"></canvas>
+<div id="recBadge" class="rec-badge hidden"></div>
+<div id="flash" class="flash"></div>
 <video id="cam" autoplay muted playsinline></video>
 <canvas id="debugDots" class="debug-dots hidden"></canvas>
 
@@ -472,9 +510,24 @@
         <output id="densityValue">60%</output>
       </label>
       <label class="slider">
+        <span>消散速度</span>
+        <input id="fade" type="range" min="0" max="100" step="1" value="31">
+        <output id="fadeValue">4 分钟</output>
+      </label>
+      <label class="slider">
         <span>擦痕粗细</span>
         <input id="brush" type="range" min="0" max="100" step="1" value="53">
         <output id="brushValue">53%</output>
+      </label>
+      <label class="slider">
+        <span>哈气灵敏度</span>
+        <input id="breathSens" type="range" min="0" max="100" step="1" value="57">
+        <output id="breathSensValue">57%</output>
+      </label>
+      <label class="slider">
+        <span>要靠多近</span>
+        <input id="breathNear" type="range" min="0" max="100" step="1" value="48">
+        <output id="breathNearValue">48%</output>
       </label>
       <div class="mode-row">
         <span>擦雾手势</span>
@@ -488,10 +541,17 @@
         <input id="assist" type="checkbox">
         <span class="switch" aria-hidden="true"></span>
       </label>
+      <label class="switch-row">
+        <span>水珠和水痕</span>
+        <input id="drops" type="checkbox" checked>
+        <span class="switch" aria-hidden="true"></span>
+      </label>
       <div class="menu-actions">
-        <button id="calibBtn" class="menu-action" type="button">重新校准手势</button>
+        <button id="invertBtn" class="menu-action" type="button" title="快捷键：I">反转</button>
         <button id="clearBtn" class="menu-action" type="button" title="快捷键：X">清除所有雾</button>
+        <button id="calibBtn" class="menu-action" type="button">重新校准</button>
       </div>
+      <div class="menu-note">快捷键：S 截屏 · R 录屏（再按停）· I 反转 · X 清雾 · D 调试</div>
     </div>
     <button id="menuBtn" class="menu-btn" type="button" aria-label="设置" aria-expanded="false">
       <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true">
@@ -556,7 +616,7 @@
 // ---------- 可以调的数字（第四阶段会做进设置面板） ----------
 const SETTINGS = {
   brushSize: 0.035,   // 擦痕半径 = 屏幕短边 × 这个比例
-  fadeSeconds: 240,   // 最浓的雾放着不管，大约多少秒散完
+  fadeSeconds: 240,   // 最浓的雾放着不管，大约多少秒散完（小气泡里的「消散速度」滑条调的就是它）
   refogSeconds: 3,    // 浓度 60% 时，按空格后雾大约多少秒长到最浓；浓度越低起得越快（见 refogTime）
   pinchOn: 0.3,       // 「两指间隙 ÷ 手掌长度」小于它算捏住，捏住后大于它 + 0.06 才算松开（按 D 看数值）。没校准过的手就用它（见 pinchOnFor）
   pinchMargin: 0.1,   // 校准过的手：画面中间的门槛 = 校准时捏住的数值 + 它（最多到 pinchOn）。越小，手指张开一点就越早停笔
@@ -674,6 +734,28 @@ const SLIDERS = [
     toPct: (v) => (Math.log(v / 0.012) / Math.log(7.5)) * 100,
     onChange: showBrushPreview,
   },
+  {
+    input: $('fade'), output: $('fadeValue'), key: 'fogMirror.fade',
+    get: () => SETTINGS.fadeSeconds,
+    set: (v) => { SETTINGS.fadeSeconds = v; },
+    toValue: (pct) => 600 * Math.pow(30 / 600, pct / 100), // 越往右散得越快：最浓的雾放着不管，10 分钟 ~ 30 秒散完
+    toPct: (v) => (Math.log(v / 600) / Math.log(30 / 600)) * 100,
+    format: (v) => (v >= 90 ? `${Math.round(v / 60)} 分钟` : `${Math.round(v)} 秒`), // 显示「多久散完」，比百分比好懂
+  },
+  {
+    input: $('breathSens'), output: $('breathSensValue'), key: 'fogMirror.breathOpen',
+    get: () => SETTINGS.breathOpen,
+    set: (v) => { SETTINGS.breathOpen = v; },
+    toValue: (pct) => 0.45 - (0.35 * pct) / 100, // 越往右越灵敏：嘴张开 0.45 ~ 0.10 就算张嘴
+    toPct: (v) => ((0.45 - v) / 0.35) * 100,
+  },
+  {
+    input: $('breathNear'), output: $('breathNearValue'), key: 'fogMirror.breathClose',
+    get: () => SETTINGS.breathClose,
+    set: (v) => { SETTINGS.breathClose = v; },
+    toValue: (pct) => 0.12 + (0.33 * pct) / 100, // 越往右要靠得越近：脸的宽度要占画面的 12% ~ 45%
+    toPct: (v) => ((v - 0.12) / 0.33) * 100,
+  },
 ];
 
 for (const s of SLIDERS) {
@@ -693,7 +775,7 @@ for (const s of SLIDERS) {
 function showSlider(s) {
   const pct = Math.round(clamp(s.toPct(s.get()), 0, 100));
   s.input.value = pct;
-  s.output.textContent = `${pct}%`;
+  s.output.textContent = s.format ? s.format(s.get()) : `${pct}%`;
   s.input.style.setProperty('--fill', `${pct}%`); // 滑条左边填成白色的那一段
 }
 
@@ -732,6 +814,23 @@ window.addEventListener('pointerdown', (e) => {
 $('clearBtn').addEventListener('click', (e) => {
   e.currentTarget.blur();
   if (running) clearAllFog();
+});
+$('invertBtn').addEventListener('click', (e) => {
+  e.currentTarget.blur();
+  if (running) toggleInvert();
+});
+
+// ---------- 小气泡里的「水珠和水痕」开关（默认开着，存在这个浏览器里） ----------
+const dropsBox = $('drops');
+let dropsOn = true;
+try { dropsOn = localStorage.getItem('fogMirror.drops') !== '0'; } catch (err) { /* 读不了就用默认：开 */ }
+dropsBox.checked = dropsOn;
+dropsBox.addEventListener('change', () => {
+  dropsOn = dropsBox.checked;
+  dropsBox.blur(); // 免得之后按空格又把它切换一下
+  if (!dropsOn) clearWater(); // 关掉的时候，已经有的水珠也一起擦掉
+  try { localStorage.setItem('fogMirror.drops', dropsOn ? '1' : '0'); } catch (err) { /* 存不了也没关系 */ }
+  flashHint(dropsOn ? '水珠和水痕开了：擦痕边上会有小水珠，有的会往下流' : '水珠和水痕关了');
 });
 
 // ---------- 小气泡里的「辅助书写」开关（存在这个浏览器里） ----------
@@ -869,6 +968,7 @@ function showProblem(name) {
   hide(hint);
   setMenu(false);
   hide(menuEl);
+  if (recorder) recorder.stop(); // 摄像头断了：正在录的先停下存好
   show(problemScreen); // 盖在开始页上面；点「再试一次」时拿掉它，下面就是开始页
 }
 
@@ -880,20 +980,27 @@ const fog = {
   density: new Float32Array(0),     // 每格的雾浓度：0 = 没雾，1 = 最浓
   bytes: new Uint8ClampedArray(0),  // 同一张表的 0~255 版本，交给显卡用
   lumpy: new Float32Array(0),       // 每格一个 0~1 的随机数（大块起伏）：哪里雾长得快、散得快
+  ink: new Float32Array(0),         // 每格「写过」多少（用手或鼠标擦过的地方，0~1）：反转时用（见 toggleInvert）
 };
 
 function resizeFog() {
   const w = Math.ceil(W / CELL), h = Math.ceil(H / CELL);
   if (w === fog.w && h === fog.h) return;
-  const old = fog.density, ow = fog.w, oh = fog.h;
-  const density = new Float32Array(w * h);
+  const old = fog.density, oldInk = fog.ink, ow = fog.w, oh = fog.h;
+  const density = new Float32Array(w * h), ink = new Float32Array(w * h);
   if (ow === 0) {
     density.fill(1); // 刚打开：满屏是雾
-  } else {           // 窗口大小变了：尽量保留原来的雾
-    for (let j = 0; j < h; j++)
-      for (let i = 0; i < w; i++)
-        density[j * w + i] = old[Math.min(j, oh - 1) * ow + Math.min(i, ow - 1)];
+  } else {           // 窗口大小变了：尽量保留原来的雾和写过的字
+    for (let j = 0; j < h; j++) {
+      for (let i = 0; i < w; i++) {
+        const from = Math.min(j, oh - 1) * ow + Math.min(i, ow - 1);
+        density[j * w + i] = old[from];
+        ink[j * w + i] = oldInk[from];
+      }
+    }
   }
+  inverted = null; // 反转记下的字是按旧的格子存的，大小变了就不能用了
+  invertAnim = null;
   const lumpy = new Float32Array(w * h);
   for (let j = 0; j < h; j++) {
     for (let i = 0; i < w; i++) {
@@ -901,7 +1008,7 @@ function resizeFog() {
       lumpy[j * w + i] = 0.65 * smoothNoise(x / 190, y / 190) + 0.35 * smoothNoise(x / 70 + 31, y / 70 + 17);
     }
   }
-  Object.assign(fog, { w, h, density, lumpy, bytes: new Uint8ClampedArray(w * h) });
+  Object.assign(fog, { w, h, density, ink, lumpy, bytes: new Uint8ClampedArray(w * h) });
   for (let k = 0; k < density.length; k++) fog.bytes[k] = density[k] * 255;
   gl.bindTexture(gl.TEXTURE_2D, maskTex);
   gl.texImage2D(gl.TEXTURE_2D, 0, gl.LUMINANCE, w, h, 0, gl.LUMINANCE, gl.UNSIGNED_BYTE, fog.bytes);
@@ -916,7 +1023,48 @@ function clearAllFog() {
   refogLeft = 0; // 正在起雾的话也停下来
   clearLeft = CLEAR_SECONDS;
   breath.level = 0; // 下一口气从嘴边一小片重新开始长
+  clearWater();
+  fog.ink.fill(0); // 写过的字也不算了
+  inverted = null;
+  invertAnim = null;
   flashHint('雾都清掉了 · 脸靠近镜头哈气，就能重新起雾');
+}
+
+// ---------- 反转（用户要的）：写过的字变成「雾做的字」，别的地方的雾都去掉，方便字和人一起合照；再按一次换回来 ----------
+// 写过的地方记在 fog.ink 里（用手或鼠标擦过的地方）。只把「写过、而且现在还是清楚的」地方变成雾：
+// 本来就没雾的地方、被雾重新盖住的旧字，都不会变成字。字的边缘和擦痕一样柔和
+const INVERT_SECONDS = 0.6; // 慢慢变过去，不会一下子跳
+let inverted = null;   // 反转着的时候：那些「雾做的字」（每格的浓度），再按一次就换回「雾里擦出来的字」
+let invertAnim = null; // 正在慢慢变：{ from, to, t }
+function toggleInvert() {
+  if (!fog.w) return;
+  const { density, ink } = fog;
+  const to = new Float32Array(density.length);
+  if (!inverted) {
+    let written = 0;
+    for (let k = 0; k < to.length; k++) {
+      to[k] = ink[k] * (1 - density[k]);
+      if (to[k] > 0.5) written++;
+    }
+    if (written < 20) {
+      flashHint('还没有写字：先在雾上写几个字，再按反转');
+      return;
+    }
+    inverted = to.slice();
+    ink.fill(0);
+    flashHint('反转了：字变成了雾，别的地方都擦干净了 · 按 S 截屏合照 · 再按一次反转换回来');
+  } else {
+    for (let k = 0; k < to.length; k++) {
+      to[k] = 1 - inverted[k];
+      ink[k] = inverted[k]; // 换回来以后还能再反转
+    }
+    inverted = null;
+    flashHint('换回来了：满屏的雾里是擦出来的字');
+  }
+  clearWater(); // 水珠是贴着原来的擦痕长的，反转以后就不对了
+  refogLeft = 0;
+  clearLeft = 0;
+  invertAnim = { from: density.slice(), to, t: 0 };
 }
 
 // 起雾要多久：浓度越低，雾越薄，起得越快（浓度 60% 时正好是 refogSeconds，0% 时是它的 0.4 倍，大约 1.2 秒）
@@ -926,6 +1074,18 @@ function refogTime() {
 
 // 每一帧：雾慢慢散；正在哈气的话，从嘴边往外长；刚按过空格的话，整面一起长
 function updateFog(dt) {
+  if (invertAnim) { // 反转中：雾慢慢变成反转后的样子；这 0.6 秒里不起雾、也不散雾
+    invertAnim.t += dt;
+    const p = smoothstep(0, INVERT_SECONDS, invertAnim.t);
+    const { from, to } = invertAnim;
+    for (let k = 0; k < from.length; k++) {
+      const v = from[k] + (to[k] - from[k]) * p;
+      fog.density[k] = v;
+      fog.bytes[k] = v * 255;
+    }
+    if (invertAnim.t >= INVERT_SECONDS) invertAnim = null;
+    return;
+  }
   const fade = dt / SETTINGS.fadeSeconds;
   const grow = refogLeft > 0 ? dt / refogTime() : 0;
   refogLeft = Math.max(0, refogLeft - dt);
@@ -970,10 +1130,10 @@ function brushRadius() { return Math.max(14, Math.min(W, H) * SETTINGS.brushSize
 
 // 从 (x0,y0) 擦到 (x1,y1)。擦掉的是一整段「胶囊形」（线段 + 两头圆），
 // 所以移动得再快，痕迹也是连着的，不会断成一个个点。
-function wipe(x0, y0, x1, y1) {
-  const r = brushRadius();
+// r：擦多宽（默认是笔刷；往下流的水珠冲出的水痕窄一些）。writing：是不是用手或鼠标「写」的（记到 fog.ink 里，反转时用）
+function wipe(x0, y0, x1, y1, r = brushRadius(), writing = false) {
   const soft = r * 0.5; // 外面这一半慢慢过渡，边缘柔和顺滑，不是一刀切
-  const { w, h, density } = fog;
+  const { w, h, density, ink } = fog;
   const i0 = Math.max(0, Math.floor((Math.min(x0, x1) - r) / CELL));
   const i1 = Math.min(w - 1, Math.floor((Math.max(x0, x1) + r) / CELL));
   const j0 = Math.max(0, Math.floor((Math.min(y0, y1) - r) / CELL));
@@ -993,12 +1153,17 @@ function wipe(x0, y0, x1, y1) {
       const k = j * w + i;
       // keep：这一格最多还能剩多少雾（中心是 0 = 擦干净，往外顺滑地回到 1）
       const keep = smootherstep(r - soft, r, dist);
-      if (keep < density[k]) density[k] = keep; // 只会变少不会变多；同一个地方擦几遍效果一样
+      const before = density[k];
+      if (keep < before) {
+        density[k] = keep; // 只会变少不会变多；同一个地方擦几遍效果一样
+        // 写过多少 = 真的擦掉了多少雾，一笔里擦好几下就加起来（本来没雾的地方擦了也不算写过，反转时不会变出字来）
+        if (writing) ink[k] = Math.min(1, ink[k] + before - keep);
+      }
     }
   }
 }
 
-let wiping = false, lastX = 0, lastY = 0;
+let wiping = false, lastX = 0, lastY = 0, lastUX = 0, lastUY = 1; // lastUX/UY：最后往哪个方向擦（松开时水攒在那头）
 
 canvas.addEventListener('pointerdown', (e) => {
   if (!running || (e.pointerType === 'mouse' && e.button !== 0)) return;
@@ -1006,18 +1171,26 @@ canvas.addEventListener('pointerdown', (e) => {
   lastX = e.clientX;
   lastY = e.clientY;
   canvas.setPointerCapture(e.pointerId);
-  wipe(lastX, lastY, lastX, lastY); // 点一下也能擦出一个圆
+  userWipe(lastX, lastY, lastX, lastY); // 点一下也能擦出一个圆
 });
 canvas.addEventListener('pointermove', (e) => {
   if (!wiping) return;
   const list = e.getCoalescedEvents ? e.getCoalescedEvents() : [];
   for (const p of list.length ? list : [e]) { // 两帧之间鼠标可能动了好几下，每一下都擦
-    wipe(lastX, lastY, p.clientX, p.clientY);
+    const dx = p.clientX - lastX, dy = p.clientY - lastY, len = Math.hypot(dx, dy);
+    if (len > 0.5) {
+      lastUX = dx / len;
+      lastUY = dy / len;
+    }
+    userWipe(lastX, lastY, p.clientX, p.clientY);
     lastX = p.clientX;
     lastY = p.clientY;
   }
 });
-const stopWiping = () => { wiping = false; };
+const stopWiping = () => {
+  if (wiping) pushWaterEnd(lastX, lastY, lastUX, lastUY);
+  wiping = false;
+};
 canvas.addEventListener('pointerup', stopWiping);
 canvas.addEventListener('pointercancel', stopWiping);
 
@@ -1034,6 +1207,272 @@ window.addEventListener('keydown', (e) => {
   if (e.code !== 'KeyX' || e.repeat || !running || e.metaKey || e.ctrlKey || e.altKey) return;
   clearAllFog();
 });
+
+// I：反转（和小气泡里的按钮一样）
+window.addEventListener('keydown', (e) => {
+  if (e.code !== 'KeyI' || e.repeat || !running || e.metaKey || e.ctrlKey || e.altKey) return;
+  toggleInvert();
+});
+
+// =====================================================================
+//  3b. 水珠和水痕：擦雾时，擦掉的雾变成小水珠，被推到擦痕两边；
+//      有的水珠攒够了水会往下流，流过的地方雾被冲掉，留下一道清楚的水痕
+// =====================================================================
+const waterCanvas = $('water');
+const waterCtx = waterCanvas.getContext('2d');
+const water = { drops: [], drips: [], dirty: true, drawnAt: 0 }; // 静止的水珠、正在往下流的水珠；dirty = 要重画
+const MAX_DROPS = 450; // 水珠最多这么多颗，再多就让最早的先干掉
+let clock = 0;         // 现在的时间（毫秒，每帧更新），水珠记出生时间用
+let dropSprite = null; // 一颗水珠的样子：先画好一张小图，之后每颗按大小贴上去（很快）
+let dripSprite = null; // 往下流的水珠的样子（水滴形）
+
+// 画一颗水珠的样子（64×64 的小图，水珠半径 26）：水珠像个小透镜——
+// 边上一圈暗（光被折走了）、左上一个高光点、右下透过来一道亮边
+function makeDropSprite() {
+  const s = document.createElement('canvas');
+  s.width = s.height = 64;
+  const g = s.getContext('2d');
+  const c = 32, R = 26;
+  let grad = g.createRadialGradient(c + 2, c + 3, R * 0.55, c + 2, c + 3, R * 1.05); // 偏右下的暗边
+  grad.addColorStop(0, 'rgba(0, 0, 0, 0)');
+  grad.addColorStop(0.75, 'rgba(0, 0, 0, 0.22)');
+  grad.addColorStop(1, 'rgba(0, 0, 0, 0)');
+  g.fillStyle = grad;
+  g.beginPath();
+  g.arc(c + 2, c + 3, R * 1.05, 0, Math.PI * 2);
+  g.fill();
+  grad = g.createRadialGradient(c - 4, c - 5, 1, c, c, R); // 水珠本身：中间透亮，边上一圈稍亮
+  grad.addColorStop(0, 'rgba(255, 255, 255, 0.28)');
+  grad.addColorStop(0.7, 'rgba(255, 255, 255, 0.08)');
+  grad.addColorStop(1, 'rgba(255, 255, 255, 0.18)');
+  g.fillStyle = grad;
+  g.beginPath();
+  g.arc(c, c, R, 0, Math.PI * 2);
+  g.fill();
+  g.strokeStyle = 'rgba(255, 255, 255, 0.45)'; // 右下透过来的亮边
+  g.lineWidth = 2.2;
+  g.lineCap = 'round';
+  g.beginPath();
+  g.arc(c, c, R * 0.78, Math.PI * 0.15, Math.PI * 0.7);
+  g.stroke();
+  grad = g.createRadialGradient(c - 9, c - 10, 0, c - 9, c - 10, 7); // 左上的高光点
+  grad.addColorStop(0, 'rgba(255, 255, 255, 0.95)');
+  grad.addColorStop(1, 'rgba(255, 255, 255, 0)');
+  g.fillStyle = grad;
+  g.beginPath();
+  g.arc(c - 9, c - 10, 7, 0, Math.PI * 2);
+  g.fill();
+  return s;
+}
+
+function fogAt(x, y) { // 屏幕上某一点的雾有多浓（0~1）
+  const i = clamp(Math.floor(x / CELL), 0, fog.w - 1), j = clamp(Math.floor(y / CELL), 0, fog.h - 1);
+  return fog.density[j * fog.w + i] || 0;
+}
+
+function waterAmount() { return 0.35 + 0.65 * SETTINGS.fogDensity; } // 雾越浓，擦出来的水越多
+
+// 用手或鼠标擦一段：先处理水珠，再擦雾
+function userWipe(x0, y0, x1, y1) {
+  pushWater(x0, y0, x1, y1);
+  wipe(x0, y0, x1, y1, brushRadius(), true);
+}
+
+// 擦到的水珠跟着被抹掉；擦掉的雾变成小水珠，被推到擦痕两边（前面的雾越浓、擦得越长，水珠越多）
+function pushWater(x0, y0, x1, y1) {
+  if (!dropsOn) return; // 小气泡里把「水珠和水痕」关了
+  const r = brushRadius();
+  takeDrops(x0, y0, x1, y1, r * 0.8);
+  const dx = x1 - x0, dy = y1 - y0, len = Math.hypot(dx, dy);
+  const a = len > 0 ? Math.atan2(dy, dx) : Math.random() * Math.PI * 2;
+  const ux = Math.cos(a), uy = Math.sin(a);
+  const ahead = fogAt(x1 + ux * r * 0.5, y1 + uy * r * 0.5); // 前面那块（这一笔还没擦到）有多少雾
+  if (ahead < 0.2) return;
+  // 这一段大约推出几颗（用户说 1.5 倍时「有一点点多」，改成 0.9）
+  const expected = (Math.max(len, r * 0.25) / (r * 0.25)) * ahead * waterAmount() * 0.9;
+  let n = Math.floor(expected) + (Math.random() < expected % 1 ? 1 : 0);
+  while (n-- > 0) {
+    const side = Math.random() < 0.5 ? -1 : 1; // 左边还是右边
+    const t = Math.random(), off = r * (0.82 + 0.22 * Math.random());
+    const x = x0 + dx * t - uy * side * off, y = y0 + dy * t + ux * side * off;
+    if (fogAt(x, y) < 0.15) continue; // 边上本来就没雾（之前擦过）：不长水珠
+    // 大多是小的，偶尔一颗大的；在擦痕下边的（水往低处攒），才有可能往下流
+    addDrop(x, y, clamp(r * (0.045 + 0.13 * Math.random() * Math.random()), 1.2, 6), ux * side > 0.3);
+  }
+}
+
+// 一笔擦完：往前推的水攒在擦痕的头上，多留几颗、大一点的水珠
+function pushWaterEnd(x, y, ux, uy) {
+  if (!dropsOn) return;
+  const r = brushRadius();
+  const amount = fogAt(x + ux * r * 1.2, y + uy * r * 1.2) * waterAmount();
+  if (amount < 0.2) return;
+  const n = Math.round(1 + 2 * amount);
+  const a0 = Math.atan2(uy, ux);
+  for (let i = 0; i < n; i++) {
+    const a = a0 + (Math.random() - 0.5) * 2.4, off = r * (0.85 + 0.2 * Math.random()); // 前面那半圈
+    addDrop(x + Math.cos(a) * off, y + Math.sin(a) * off, clamp(r * (0.06 + 0.12 * Math.random()), 1.3, 7), Math.sin(a) > 0.3);
+  }
+}
+
+// 加一颗水珠。canDrip：在擦痕下边、又大一点（超过 2.2 像素）的，有三分之一会在 1~5 秒后（攒够了水）往下流
+function addDrop(x, y, r, canDrip = false) {
+  const drop = { x, y, r, born: clock, life: 40000 + Math.random() * 60000 }; // 40~100 秒后慢慢干掉
+  if (canDrip && r > 2.2 && Math.random() < 0.35) drop.dripAt = clock + 1000 + Math.random() * 4000;
+  water.drops.push(drop);
+  if (water.drops.length > MAX_DROPS) water.drops.shift();
+  water.dirty = true;
+}
+
+// 拿走一段路上的水珠（被擦到的，或者被往下流的水珠吞掉的），返回拿走了多少水（半径平方加起来）
+function takeDrops(x0, y0, x1, y1, r, lists = [water.drops, water.drips]) {
+  const dx = x1 - x0, dy = y1 - y0, len2 = dx * dx + dy * dy;
+  let taken = 0;
+  for (const list of lists) {
+    for (let k = list.length - 1; k >= 0; k--) {
+      const p = list[k];
+      const t = len2 > 0 ? clamp(((p.x - x0) * dx + (p.y - y0) * dy) / len2, 0, 1) : 0;
+      if (Math.hypot(x0 + dx * t - p.x, y0 + dy * t - p.y) < r + p.r * 0.5) {
+        taken += p.r * p.r;
+        list.splice(k, 1);
+        water.dirty = true;
+      }
+    }
+  }
+  return taken;
+}
+
+function clearWater() { // 清除所有雾时，水珠也一起擦掉
+  water.drops = [];
+  water.drips = [];
+  water.dirty = true;
+}
+
+// 每一帧：水珠慢慢干掉；到时间的开始往下流。
+// 往下流的像真的水珠（用户说以前的「流下来有点不真实」）：刚开始慢、慢慢加速，越大越快；
+// 时不时在干一点的地方「挂住」一下、慢下来，再接着流；左右不是来回摆，而是随机地、慢慢地偏一点；
+// 流过的地方雾被冲掉（水痕和水珠一样宽，越流越细）；路上碰到的小水珠被吞进来变大；
+// 一路上留下水，越流越小、越流越慢，最后停下变回一颗水珠
+function updateWater(dt) {
+  for (let k = water.drops.length - 1; k >= 0; k--) {
+    const d = water.drops[k];
+    if (d.dripAt && clock >= d.dripAt) {
+      water.drops.splice(k, 1);
+      water.drips.push({ x: d.x, y: d.y, r: Math.min(6, d.r * 1.25), vx: 0, vy: 0, stuck: 0 });
+      water.dirty = true;
+    } else if (clock - d.born > d.life) {
+      water.drops.splice(k, 1);
+      water.dirty = true;
+    }
+  }
+  for (let k = water.drips.length - 1; k >= 0; k--) {
+    const p = water.drips[k];
+    if (p.stuck > 0) { // 挂住了：很快慢下来
+      p.stuck -= dt;
+      p.vy *= 1 - Math.min(1, dt * 10);
+    } else {
+      const target = 25 + 50 * (p.r - 1.5);           // 越大越快：半径 2 像素每秒 50 像素，4 像素每秒 150 像素
+      p.vy += (target - p.vy) * Math.min(1, dt * 2.5); // 慢慢加速，不会一下子冲出去
+      if (Math.random() < dt * 0.9) p.stuck = 0.15 + Math.random() * 0.5; // 大约一秒挂住一次
+    }
+    p.vx += (Math.random() - 0.5) * 80 * dt; // 左右随机偏一点，很快又回正
+    p.vx *= 1 - Math.min(1, dt * 3);
+    const nx = p.x + p.vx * dt, ny = p.y + p.vy * dt;
+    const step = Math.hypot(nx - p.x, ny - p.y);
+    if (step > 0.01) {
+      wipe(p.x, p.y, nx, ny, Math.max(3.5, p.r * 0.9)); // 流过的地方，雾被冲掉一道
+      const got = takeDrops(p.x, p.y, nx, ny, p.r, [water.drops]);
+      if (got) p.r = Math.min(7, Math.sqrt(p.r * p.r + got * 0.5));
+      p.r -= step * 0.007;
+      if (Math.random() < step * 0.03) { // 水痕边上偶尔留下一颗小水珠
+        const side = Math.random() < 0.5 ? -1 : 1;
+        addDrop(p.x + side * (p.r * 0.9 + 1.5), p.y - p.r, Math.max(0.8, p.r * (0.3 + 0.2 * Math.random())));
+      }
+      p.x = nx;
+      p.y = ny;
+    }
+    if (p.r < 1.8 || p.y > H + 10) {
+      water.drips.splice(k, 1);
+      if (p.y < H) addDrop(p.x, p.y, Math.max(1.2, p.r)); // 停下的地方留一颗水珠（不会再流）
+    }
+    water.dirty = true;
+  }
+}
+
+// 往下流的水珠：下面圆、上面拖一点尖（64×96 的小图，圆的半径 22，圆心在 (32, 66)）
+function makeDripSprite() {
+  const s = document.createElement('canvas');
+  s.width = 64;
+  s.height = 96;
+  const g = s.getContext('2d');
+  const shape = () => {
+    g.beginPath();
+    g.moveTo(32, 16); // 上面的尖
+    g.bezierCurveTo(37, 36, 54, 50, 54, 66);
+    g.arc(32, 66, 22, 0, Math.PI); // 下面半圆
+    g.bezierCurveTo(10, 50, 27, 36, 32, 16);
+    g.closePath();
+  };
+  g.save(); // 偏右下的暗边
+  g.translate(1.5, 2);
+  shape();
+  g.strokeStyle = 'rgba(0, 0, 0, 0.22)';
+  g.lineWidth = 3;
+  g.stroke();
+  g.restore();
+  shape(); // 身子：中间透亮，边上一圈稍亮
+  const grad = g.createRadialGradient(28, 60, 2, 32, 62, 30);
+  grad.addColorStop(0, 'rgba(255, 255, 255, 0.3)');
+  grad.addColorStop(0.7, 'rgba(255, 255, 255, 0.1)');
+  grad.addColorStop(1, 'rgba(255, 255, 255, 0.22)');
+  g.fillStyle = grad;
+  g.fill();
+  g.strokeStyle = 'rgba(255, 255, 255, 0.45)'; // 右下透过来的亮边
+  g.lineWidth = 2.4;
+  g.lineCap = 'round';
+  g.beginPath();
+  g.arc(32, 66, 17, Math.PI * 0.1, Math.PI * 0.65);
+  g.stroke();
+  const hl = g.createRadialGradient(24, 56, 0, 24, 56, 7); // 左上的高光点
+  hl.addColorStop(0, 'rgba(255, 255, 255, 0.95)');
+  hl.addColorStop(1, 'rgba(255, 255, 255, 0)');
+  g.fillStyle = hl;
+  g.beginPath();
+  g.arc(24, 56, 7, 0, Math.PI * 2);
+  g.fill();
+  return s;
+}
+
+// 把水珠画到透明画布上。有水珠在流、或者刚有变化才重画；快干掉的水珠慢慢变淡，0.2 秒重画一次就够
+function drawWater(now) {
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  const w = Math.round(W * dpr), h = Math.round(H * dpr);
+  if (waterCanvas.width !== w || waterCanvas.height !== h) {
+    waterCanvas.width = w;
+    waterCanvas.height = h;
+    water.dirty = true;
+  }
+  const fading = water.drops.some((d) => now - d.born > d.life - 6000);
+  if (!water.dirty && !(fading && now - water.drawnAt > 200)) return;
+  water.dirty = false;
+  water.drawnAt = now;
+  if (!dropSprite) {
+    dropSprite = makeDropSprite();
+    dripSprite = makeDripSprite();
+  }
+  waterCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  waterCtx.clearRect(0, 0, W, H);
+  const k = 32 / 26; // 小图比水珠本身大一圈（留给暗边）
+  for (const d of water.drops) {
+    waterCtx.globalAlpha = clamp((d.life - (now - d.born)) / 6000, 0, 1); // 干掉之前 6 秒慢慢变淡
+    waterCtx.drawImage(dropSprite, d.x - d.r * k, d.y - d.r * k, 2 * d.r * k, 2 * d.r * k);
+  }
+  waterCtx.globalAlpha = 1;
+  for (const p of water.drips) { // 往下流的：下面圆、上面拖一点尖（小图里圆的半径 22，圆心在 (32, 66)）
+    const s = p.r / 22;
+    waterCtx.drawImage(dripSprite, p.x - 32 * s, p.y - 66 * s, 64 * s, 96 * s);
+  }
+}
 
 // =====================================================================
 //  4. 手势擦雾：MediaPipe 在画面里找出手上的 21 个点（最多两只手），
@@ -1699,7 +2138,7 @@ function strokeStart(pen) {
   pen.ink = { x: pen.pos.x, y: pen.pos.y }; // 辅助书写的墨迹也从指尖开始
   const p = inkOf(pen);
   pen.stroke = [p];
-  wipe(p.x, p.y, p.x, p.y);
+  userWipe(p.x, p.y, p.x, p.y);
 }
 
 // 每来一个新位置，就把「上上个 → 上个」这一段补上。
@@ -1716,7 +2155,11 @@ function strokeAdd(pen) {
 
 function strokeEnd(pen) { // 松手时把最后一段补完
   const pts = pen.stroke, n = pts.length;
-  if (n >= 2) wipeCurve(pts[n - 3] || pts[n - 2], pts[n - 2], pts[n - 1], pts[n - 1]);
+  if (n >= 2) {
+    wipeCurve(pts[n - 3] || pts[n - 2], pts[n - 2], pts[n - 1], pts[n - 1]);
+    const a = pts[n - 2], b = pts[n - 1], len = Math.hypot(b.x - a.x, b.y - a.y);
+    if (len > 0) pushWaterEnd(b.x, b.y, (b.x - a.x) / len, (b.y - a.y) / len); // 往前推的水攒在这一笔的头上
+  }
   pen.stroke = [];
 }
 
@@ -1728,7 +2171,7 @@ function wipeCurve(a, b, c, d) {
   let prev = b;
   for (let s = 1; s <= steps; s++) {
     const p = catmullRom(a, b, c, d, s / steps);
-    wipe(prev.x, prev.y, p.x, p.y);
+    userWipe(prev.x, prev.y, p.x, p.y);
     prev = p;
   }
 }
@@ -2280,6 +2723,7 @@ function loop(now) {
   // 离上一帧过了几秒（切到别的窗口再回来时，最多按 0.1 秒算，雾不会一下子散光）
   const dt = lastT ? Math.min(0.1, (now - lastT) / 1000) : 0;
   lastT = now;
+  clock = now;
   // 摄像头有新画面才认手（不支持「新画面通知」的浏览器，就每 33 毫秒认一次）。
   // 认脸不用那么勤（一秒十几次就够），而且和认手错开在不同的帧里做，一帧里的活儿不会太多
   const handDue = canWatchFrames ? handFresh : now - lastHandTime > 33;
@@ -2295,8 +2739,11 @@ function loop(now) {
     breath.on = false;
     breath.since = 0;
   }
+  updateWater(dt); // 先让水珠流：流过的地方冲掉的雾，这一帧就画出来
   updateFog(dt);
   draw(now);
+  drawWater(now);
+  captureFrame(); // 截屏、录屏：镜子画面只有刚画完的这一刻能取
   drawPens(dt, now);
   drawPalmRing(dt, now);
   updateDebug(now);
@@ -2385,7 +2832,9 @@ function renderDebug(now = performance.now()) {
     ['清雾手势', `伸直大于 0.85 算手掌张开，左右来回抹 ${WAVE_PASSES} 下（每下横着走 ${Math.round(waveStep())} 像素以上）`],
     ['辅助书写', assistOn ? `开（绳长 ${Math.round(ropeLength())} 像素）` : '关'],
     ['捏合校准', `右手${mapInfo(pinchMaps.right)} · 左手${mapInfo(pinchMaps.left)}`],
-    ['快捷键', 'X 清除所有雾 · 空格 整面起雾（测试用）· C 重新校准 · Esc 跳过 · Shift+C 按两次清除校准'],
+    ['水珠', dropsOn ? `${water.drops.length} 颗 · 正在往下流 ${water.drips.length} 道` : '关着'],
+    ['反转', inverted ? '反转着（雾做的字）· 再按 I 换回来' : '没有（按 I 反转）'],
+    ['快捷键', 'S 截屏 · R 录屏 · X 清除所有雾 · 空格 整面起雾（测试用）· C 重新校准 · Esc 跳过 · Shift+C 按两次清除校准'],
   ];
   debugRows.innerHTML = rows.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('');
 }
@@ -2449,6 +2898,166 @@ function drawGrid() {
     dotsCtx.fillStyle = map.measured[k] ? 'rgba(255, 255, 255, 0.9)' : 'rgba(255, 255, 255, 0.45)';
     dotsCtx.fillText(map.closed[k].toFixed(2), (a.x + b.x) / 2, (a.y + b.y) / 2);
   }
+}
+
+// =====================================================================
+//  8. 截屏（S）和录屏（R，再按一次停）：只有镜子、雾和水珠（不带小圆圈、按钮、提示）。
+//     存到用户选的文件夹里（第一次选一下，以后直接存）：网页不能自己往桌面写文件，
+//     Chrome 也不让网页用整个桌面，所以请用户在桌面上新建一个「雾镜作品」文件夹选中它。
+//     Safari 不支持选文件夹，就按普通下载存到「下载」
+// =====================================================================
+const shot = document.createElement('canvas'); // 镜子画面和水珠合到这一张上，再存成图片、视频
+const shotCtx = shot.getContext('2d');
+const recBadge = $('recBadge');
+const flashEl = $('flash');
+let shotWanted = false;   // 按了 S：这一帧画完就截
+let recordWanted = false; // 按了 R：这一帧画完就开始录
+let recorder = null;      // 正在录屏时：MediaRecorder
+let recordStart = 0;
+let saveDir = null;       // 存到哪个文件夹（选过一次就记住，存在 IndexedDB 里，刷新页面也记得）
+
+window.addEventListener('keydown', (e) => {
+  if (!running || e.repeat || e.metaKey || e.ctrlKey || e.altKey) return; // Command+S 之类的不算
+  if (e.code === 'KeyS') shotWanted = true;
+  if (e.code === 'KeyR') {
+    if (recorder) recorder.stop();
+    else recordWanted = true;
+  }
+});
+
+// 每一帧画完之后：要截屏、正在录屏的话，把镜子画面和水珠合成一张
+function captureFrame() {
+  if (!shotWanted && !recordWanted && !recorder) return;
+  const scale = Math.min(1, 1920 / Math.max(canvas.width, canvas.height)); // 最长边不超过 1920，录屏才不会卡
+  const w = Math.round(canvas.width * scale), h = Math.round(canvas.height * scale);
+  if (shot.width !== w || shot.height !== h) {
+    shot.width = w;
+    shot.height = h;
+  }
+  shotCtx.drawImage(canvas, 0, 0, w, h);
+  shotCtx.drawImage(waterCanvas, 0, 0, w, h);
+  if (shotWanted) {
+    shotWanted = false;
+    flashEl.classList.add('on'); // 屏幕白闪一下：截到了
+    setTimeout(() => flashEl.classList.remove('on'), 60);
+    shot.toBlob((blob) => { if (blob) saveFile(blob, `雾镜-${timeStamp()}.png`, '截屏'); }, 'image/png');
+  }
+  if (recordWanted) {
+    recordWanted = false;
+    startRecording();
+  }
+  if (recorder) recBadge.textContent = `录屏中 ${formatTime(clock - recordStart)} · 按 R 停止`;
+}
+
+function startRecording() {
+  if (!shot.captureStream || !window.MediaRecorder) {
+    flashHint('这个浏览器不支持录屏');
+    return;
+  }
+  // 能存 MP4 就存 MP4（Mac 上直接能放）；不行再存 WebM
+  const type = ['video/mp4;codecs=avc1', 'video/mp4', 'video/webm;codecs=vp9', 'video/webm'].find((t) => MediaRecorder.isTypeSupported(t));
+  let rec;
+  try {
+    rec = new MediaRecorder(shot.captureStream(30), type ? { mimeType: type, videoBitsPerSecond: 8000000 } : {});
+  } catch (err) {
+    console.error('录屏开不了', err);
+    flashHint('录屏开不了（这个浏览器可能不支持）');
+    return;
+  }
+  const chunks = [];
+  rec.ondataavailable = (e) => { if (e.data && e.data.size) chunks.push(e.data); };
+  rec.onstop = () => {
+    recorder = null;
+    hide(recBadge);
+    const blob = new Blob(chunks, { type: rec.mimeType || type || 'video/webm' });
+    saveFile(blob, `雾镜-${timeStamp()}.${blob.type.includes('mp4') ? 'mp4' : 'webm'}`, '录屏');
+  };
+  rec.start(1000); // 每秒交一次数据，录很久也不会占太多内存
+  recorder = rec;
+  recordStart = clock;
+  show(recBadge);
+  flashHint('开始录屏 · 再按 R 停止');
+}
+
+// 存文件：先试着存到用户选的文件夹；不支持、没选、出错，就按普通下载存
+async function saveFile(blob, name, what) {
+  try {
+    const dir = await getSaveDir();
+    if (dir) {
+      const file = await dir.getFileHandle(name, { create: true });
+      const out = await file.createWritable();
+      await out.write(blob);
+      await out.close();
+      flashHint(`${what}存好了：「${dir.name}」文件夹里的 ${name}`);
+      return;
+    }
+  } catch (err) {
+    console.warn('存到文件夹没成功，改成下载', err);
+  }
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = name;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+  flashHint(`${what}存好了：在「下载」文件夹里的 ${name}`);
+}
+
+// 存到哪个文件夹：第一次弹出选文件夹的窗口（从桌面开始），以后记住；
+// 下次打开页面时 Chrome 可能会问一句「允许编辑文件吗」（按 S、R 时才问）
+async function getSaveDir() {
+  if (!window.showDirectoryPicker) return null; // Safari 等：不支持
+  if (!saveDir) saveDir = await loadDirHandle();
+  if (saveDir) {
+    let perm = await saveDir.queryPermission({ mode: 'readwrite' });
+    if (perm === 'prompt') perm = await saveDir.requestPermission({ mode: 'readwrite' });
+    if (perm === 'granted') return saveDir;
+  }
+  flashHint('第一次保存：在弹出的窗口里，到「桌面」新建一个文件夹（比如「雾镜作品」），选中它再点「打开」');
+  saveDir = await window.showDirectoryPicker({ id: 'fog-mirror', mode: 'readwrite', startIn: 'desktop' });
+  storeDirHandle(saveDir);
+  return saveDir;
+}
+
+// 选过的文件夹存在浏览器的 IndexedDB 里（localStorage 存不了这种东西）
+function openStore() {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open('fogMirror', 1);
+    req.onupgradeneeded = () => req.result.createObjectStore('kv');
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+
+async function loadDirHandle() {
+  try {
+    const db = await openStore();
+    return await new Promise((resolve) => {
+      const req = db.transaction('kv').objectStore('kv').get('saveDir');
+      req.onsuccess = () => resolve(req.result || null);
+      req.onerror = () => resolve(null);
+    });
+  } catch (err) {
+    return null;
+  }
+}
+
+async function storeDirHandle(handle) {
+  try {
+    const db = await openStore();
+    db.transaction('kv', 'readwrite').objectStore('kv').put(handle, 'saveDir');
+  } catch (err) { /* 存不了：下次再选一次 */ }
+}
+
+function timeStamp() { // 文件名里的时间，比如 2026-10-28-14.30.12（Mac 文件名里不能用冒号）
+  const d = new Date(), p = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}-${p(d.getHours())}.${p(d.getMinutes())}.${p(d.getSeconds())}`;
+}
+
+function formatTime(ms) { // 毫秒 → 0:12
+  const s = Math.floor(ms / 1000);
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
 }
 
 // ---------- 小工具 ----------
