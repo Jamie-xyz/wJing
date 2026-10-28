@@ -525,6 +525,11 @@
         <input id="drops" type="checkbox" checked>
         <span class="switch" aria-hidden="true"></span>
       </label>
+      <label class="switch-row">
+        <span>手掌擦雾时显示圆圈</span>
+        <input id="zoneRing" type="checkbox">
+        <span class="switch" aria-hidden="true"></span>
+      </label>
       <div class="menu-actions">
         <button id="invertBtn" class="menu-action" type="button" title="快捷键：I">反转</button>
         <button id="clearBtn" class="menu-action" type="button" title="快捷键：X">清除所有雾</button>
@@ -818,6 +823,18 @@ dropsBox.addEventListener('change', () => {
   if (!dropsOn) clearWater(); // 关掉的时候，已经有的水珠也一起擦掉
   try { localStorage.setItem('fogMirror.drops', dropsOn ? '1' : '0'); } catch (err) { /* 存不了也没关系 */ }
   flashHint(dropsOn ? '水珠和水痕开了：擦痕边上会有小水珠，有的会往下流' : '水珠和水痕关了');
+});
+
+// ---------- 小气泡里的「手掌擦雾时显示圆圈」开关（默认关：用户说「不要有那个圆圈，或者说可选」） ----------
+const zoneRingBox = $('zoneRing');
+let zoneRingOn = false;
+try { zoneRingOn = localStorage.getItem('fogMirror.zoneRing') === '1'; } catch (err) { /* 读不了就用默认：关 */ }
+zoneRingBox.checked = zoneRingOn;
+zoneRingBox.addEventListener('change', () => {
+  zoneRingOn = zoneRingBox.checked;
+  zoneRingBox.blur(); // 免得之后按空格又把它切换一下
+  try { localStorage.setItem('fogMirror.zoneRing', zoneRingOn ? '1' : '0'); } catch (err) { /* 存不了也没关系 */ }
+  flashHint(zoneRingOn ? '手掌擦雾时会显示一个圆圈，圈住正在擦淡的范围' : '手掌擦雾时不显示圆圈了');
 });
 
 // ---------- 小气泡里的「辅助书写」开关（存在这个浏览器里） ----------
@@ -2242,11 +2259,12 @@ function drawPens(dt, now) {
   }
 }
 
-// 手掌在擦雾的时候：画一个淡淡的圆圈，圈住正在擦淡的那一片（比识别结果再顺滑一点），这时那只手的小圆圈先藏起来
+// 手掌在擦雾的时候：那只手的小圆圈先藏起来；小气泡里打开了「显示圆圈」的话，
+// 画一个淡淡的圆圈圈住正在擦淡的那一片（比识别结果再顺滑一点）
 const palmZoneEl = $('palmZone');
 let zoneShown = null;
 function drawPalmZone(dt) {
-  const pen = guide ? null : pens.find((p) => p.palmOn);
+  const pen = guide || !zoneRingOn ? null : pens.find((p) => p.palmOn);
   palmZoneEl.classList.toggle('show', Boolean(pen));
   if (!pen) {
     zoneShown = null;
