@@ -1,2 +1,6 @@
 .DS_Store
-.claude/settings.local.json
+# 只留在自己电脑上、不公开的文件：开发记录、本地测试工具、Claude 的设置、历史备份
+CLAUDE.md
+.claude/
+dev-server.py
+.history-backup.bundle
