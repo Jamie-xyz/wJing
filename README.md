@@ -2,7 +2,7 @@
 
 在浏览器里玩的「浴室雾镜」：电脑摄像头的画面像一面镜子，对着镜头哈气就会起雾，捏住拇指和食指就能在雾上擦出字来。
 
-**在线玩：https://jamie-xyz.github.io/fog-mirror/**
+**在线玩：https://jamie-xyz.github.io/wJing/**（注意 J 是大写）
 
 用 Chrome 或 Safari 打开，点「开始」，允许使用摄像头。
 
